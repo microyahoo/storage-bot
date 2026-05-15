@@ -1,0 +1,64 @@
+# Storage Bot Configuration Example
+# Copy this to config.yaml and fill in your values.
+
+feishu:
+  app_id: "cli_xxxxxxxxxxxx"
+  app_secret: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+# LLM provider configuration
+# Supported providers: claude, openai, deepseek, local (ollama/vLLM)
+llm:
+  provider: "claude"                       # claude | openai | deepseek | local
+  api_key: "sk-ant-xxxxx"                  # or set LLM_API_KEY env var
+  model: ""                                # optional, auto-selected per provider
+  base_url: ""                             # optional, override API endpoint
+
+# --- Provider examples ---
+#
+# Claude (default):
+#   provider: "claude"
+#   api_key: "sk-ant-xxxxx"
+#   model: "claude-sonnet-4-6-20250514"
+#
+# OpenAI:
+#   provider: "openai"
+#   api_key: "sk-xxxxx"
+#   model: "gpt-4o"
+#
+# DeepSeek:
+#   provider: "deepseek"
+#   api_key: "sk-xxxxx"
+#   model: "deepseek-chat"
+#
+# Local (Ollama):
+#   provider: "local"
+#   model: "qwen2.5:14b"
+#   base_url: "http://localhost:11434/v1"
+#
+# Local (vLLM):
+#   provider: "local"
+#   model: "Qwen/Qwen2.5-14B-Instruct"
+#   base_url: "http://localhost:8000/v1"
+
+clusters:
+  cluster-01:
+    kubeconfig: "/path/to/cluster-01/kubeconfig"
+    namespace: "rook-ceph"           # optional, default: rook-ceph
+    toolbox_pod: "rook-ceph-tools"   # optional, default: rook-ceph-tools
+    ssh_nodes:
+      - name: "node-1"
+        host: "10.0.1.1:22"
+        user: "root"
+        key_file: "/root/.ssh/id_rsa"
+      - name: "node-2"
+        host: "10.0.1.2:22"
+        user: "root"
+        key_file: "/root/.ssh/id_rsa"
+
+  cluster-02:
+    kubeconfig: "/path/to/cluster-02/kubeconfig"
+    ssh_nodes:
+      - name: "node-1"
+        host: "10.0.2.1:22"
+        user: "root"
+        key_file: "/root/.ssh/id_rsa"

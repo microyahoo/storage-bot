@@ -1,0 +1,145 @@
+package executor
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"strings"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/tools/remotecommand"
+)
+
+type KubeExecutor struct {
+	restConfig *rest.Config
+	clientset  *kubernetes.Clientset
+	namespace  string
+	toolboxPod string
+}
+
+func NewKubeExecutor(kubeconfigPath, namespace, toolboxPodHint string) (*KubeExecutor, error) {
+	restConfig, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	if err != nil {
+		return nil, fmt.Errorf("build kubeconfig: %w", err)
+	}
+
+	clientset, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		return nil, fmt.Errorf("create k8s client: %w", err)
+	}
+
+	return &KubeExecutor{
+		restConfig: restConfig,
+		clientset:  clientset,
+		namespace:  namespace,
+		toolboxPod: toolboxPodHint,
+	}, nil
+}
+
+func (k *KubeExecutor) findToolboxPod(ctx context.Context) (string, error) {
+	if k.toolboxPod != "" {
+		pod, err := k.clientset.CoreV1().Pods(k.namespace).Get(ctx, k.toolboxPod, metav1.GetOptions{})
+		if err == nil && pod.Status.Phase == corev1.PodRunning {
+			return k.toolboxPod, nil
+		}
+	}
+
+	pods, err := k.clientset.CoreV1().Pods(k.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "app=rook-ceph-tools",
+	})
+	if err != nil {
+		return "", fmt.Errorf("list toolbox pods: %w", err)
+	}
+
+	for _, pod := range pods.Items {
+		if pod.Status.Phase == corev1.PodRunning {
+			return pod.Name, nil
+		}
+	}
+
+	pods, err = k.clientset.CoreV1().Pods(k.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "app=rook-ceph-operator",
+	})
+	if err != nil {
+		return "", fmt.Errorf("list operator pods: %w", err)
+	}
+	for _, pod := range pods.Items {
+		if pod.Status.Phase == corev1.PodRunning {
+			return pod.Name, nil
+		}
+	}
+
+	return "", fmt.Errorf("no running toolbox or operator pod found in namespace %s", k.namespace)
+}
+
+func (k *KubeExecutor) RunCephCommand(ctx context.Context, args ...string) (string, error) {
+	podName, err := k.findToolboxPod(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	cmd := append([]string{"ceph"}, args...)
+	return k.execInPod(ctx, podName, cmd)
+}
+
+func (k *KubeExecutor) CephHealth(ctx context.Context) (string, error) {
+	commands := [][]string{
+		{"status"},
+		{"health", "detail"},
+		{"osd", "tree"},
+		{"df"},
+	}
+
+	var results []string
+	for _, args := range commands {
+		output, err := k.RunCephCommand(ctx, args...)
+		if err != nil {
+			results = append(results, fmt.Sprintf("=== ceph %s ===\nERROR: %v", strings.Join(args, " "), err))
+		} else {
+			results = append(results, fmt.Sprintf("=== ceph %s ===\n%s", strings.Join(args, " "), output))
+		}
+	}
+
+	return strings.Join(results, "\n\n"), nil
+}
+
+func (k *KubeExecutor) execInPod(ctx context.Context, podName string, command []string) (string, error) {
+	req := k.clientset.CoreV1().RESTClient().Post().
+		Resource("pods").
+		Name(podName).
+		Namespace(k.namespace).
+		SubResource("exec").
+		VersionedParams(&corev1.PodExecOptions{
+			Command: command,
+			Stdout:  true,
+			Stderr:  true,
+		}, scheme.ParameterCodec)
+
+	exec, err := remotecommand.NewSPDYExecutor(k.restConfig, "POST", req.URL())
+	if err != nil {
+		return "", fmt.Errorf("create executor: %w", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	err = exec.StreamWithContext(ctx, remotecommand.StreamOptions{
+		Stdout: &stdout,
+		Stderr: &stderr,
+	})
+	if err != nil {
+		if stderr.Len() > 0 {
+			return "", fmt.Errorf("exec failed: %w, stderr: %s", err, stderr.String())
+		}
+		return "", fmt.Errorf("exec failed: %w", err)
+	}
+
+	output := stdout.String()
+	if stderr.Len() > 0 {
+		output += "\n[stderr]: " + stderr.String()
+	}
+	return output, nil
+}
