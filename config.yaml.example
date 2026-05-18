@@ -44,7 +44,7 @@ clusters:
   cluster-01:
     kubeconfig: "/path/to/cluster-01/kubeconfig"
     namespace: "rook-ceph"           # optional, default: rook-ceph
-    toolbox_pod: "rook-ceph-tools"   # optional, default: rook-ceph-tools
+    toolbox_pod: ""                  # optional
     ssh_nodes:
       - name: "node-1"
         host: "10.0.1.1:22"

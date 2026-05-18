@@ -17,6 +17,8 @@ import (
 	"github.com/microyahoo/storage-bot/config"
 	"github.com/microyahoo/storage-bot/executor"
 	"github.com/microyahoo/storage-bot/intent"
+	"github.com/microyahoo/storage-bot/security"
+	"github.com/microyahoo/storage-bot/skill"
 )
 
 type Handler struct {
@@ -25,19 +27,29 @@ type Handler struct {
 	sshExec      *executor.SSHExecutor
 	analyzer     *analyzer.Analyzer
 	llm          analyzer.LLMProvider
+	skills       *skill.Registry
+	audit        *security.AuditLog
 	kubeCache    map[string]*executor.KubeExecutor
 	mu           sync.Mutex
 }
 
-func NewHandler(feishuClient *lark.Client, mgr *cluster.Manager, sshExec *executor.SSHExecutor, az *analyzer.Analyzer, llm analyzer.LLMProvider) *Handler {
+func NewHandler(feishuClient *lark.Client, mgr *cluster.Manager, sshExec *executor.SSHExecutor, az *analyzer.Analyzer, llm analyzer.LLMProvider, skills *skill.Registry, audit *security.AuditLog) *Handler {
 	return &Handler{
 		feishuClient: feishuClient,
 		clusterMgr:   mgr,
 		sshExec:      sshExec,
 		analyzer:     az,
 		llm:          llm,
+		skills:       skills,
+		audit:        audit,
 		kubeCache:    make(map[string]*executor.KubeExecutor),
 	}
+}
+
+func (h *Handler) InvalidateKubeCache() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.kubeCache = make(map[string]*executor.KubeExecutor)
 }
 
 func (h *Handler) HandleMessage(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
@@ -51,13 +63,24 @@ func (h *Handler) HandleMessage(ctx context.Context, event *larkim.P2MessageRece
 		return nil
 	}
 
-	slog.Info("received message", "text", text, "chat_type", *msg.ChatType)
+	userID := ""
+	if event.Event.Sender != nil && event.Event.Sender.SenderId != nil && event.Event.Sender.SenderId.OpenId != nil {
+		userID = *event.Event.Sender.SenderId.OpenId
+	}
 
-	action := intent.Parse(text, h.clusterMgr.List())
+	slog.Info("received message", "text", text, "chat_type", *msg.ChatType, "user", userID)
+
+	sanitized := security.SanitizeForLLM(text)
+
+	knownSkills := make([]string, 0)
+	for _, s := range h.skills.List() {
+		knownSkills = append(knownSkills, s.Name())
+	}
+	action := intent.ParseWithSkills(sanitized, h.clusterMgr.List(), knownSkills)
 
 	if intent.NeedsFallback(action) {
-		slog.Info("regex parse incomplete, trying LLM fallback", "raw", text)
-		llmAction, err := intent.ParseWithLLM(ctx, text, h.clusterMgr.List(), h.llm)
+		slog.Info("regex parse incomplete, trying LLM fallback", "raw", sanitized)
+		llmAction, err := intent.ParseWithLLM(ctx, sanitized, h.clusterMgr.List(), h.llm)
 		if err != nil {
 			slog.Warn("LLM intent parsing failed, using regex result", "error", err)
 		} else {
@@ -70,14 +93,20 @@ func (h *Handler) HandleMessage(ctx context.Context, event *larkim.P2MessageRece
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 
-	var reply string
-	var err error
+	var (
+		reply string
+		err   error
+	)
 
 	switch action.Type {
 	case intent.ActionHelp:
 		reply = h.helpMessage()
 	case intent.ActionListClusters:
 		reply = h.listClusters()
+	case intent.ActionListSkills:
+		reply = h.listSkills()
+	case intent.ActionSkill:
+		reply, err = h.handleSkill(ctx, action)
 	case intent.ActionHealth:
 		reply, err = h.handleHealth(ctx, action)
 	case intent.ActionLogAnalysis:
@@ -86,8 +115,14 @@ func (h *Handler) HandleMessage(ctx context.Context, event *larkim.P2MessageRece
 		reply, err = h.handleNodeDiag(ctx, action)
 	}
 
+	status := "ok"
 	if err != nil {
+		status = "error: " + err.Error()
 		reply = fmt.Sprintf("执行出错: %v", err)
+	}
+
+	if h.audit != nil {
+		h.audit.Record(userID, action.ClusterName, action.Type.String(), text, status)
 	}
 
 	return h.replyMessage(ctx, *msg.MessageId, reply)
@@ -204,12 +239,16 @@ func (h *Handler) helpMessage() string {
 **健康检查**: check cluster-01 / 看看01集群怎么了 / cluster-01有问题吗
 **日志分析**: analyze logs cluster-01 / 分析01的日志
 **节点诊断**: check node-1 cluster-01 / 看看01集群的node-1
+**Skill**: osd cluster-01 / 看看01的pg状态 / cluster-02容量
+**Skill列表**: list skills / 有哪些技能
 
 示例：
   @bot 帮我看看cluster-01的状态
   @bot 01集群有什么问题
   @bot 分析一下cluster-02的日志
-  @bot cluster-05 node-3 磁盘状态`
+  @bot cluster-05 node-3 磁盘状态
+  @bot cluster-01 osd状态
+  @bot 看看cluster-02的容量`
 }
 
 func (h *Handler) listClusters() string {
@@ -223,6 +262,71 @@ func (h *Handler) listClusters() string {
 		sb.WriteString(fmt.Sprintf("  %s\n", name))
 	}
 	return sb.String()
+}
+
+func (h *Handler) listSkills() string {
+	skills := h.skills.List()
+	if len(skills) == 0 {
+		return "当前没有注册任何 Skill"
+	}
+	var sb strings.Builder
+	sb.WriteString("**可用的 Skills:**\n")
+	for _, s := range skills {
+		sb.WriteString(fmt.Sprintf("  **%s** — %s\n", s.Name(), s.Description()))
+	}
+	return sb.String()
+}
+
+func (h *Handler) handleSkill(ctx context.Context, action intent.Action) (string, error) {
+	s, ok := h.skills.Get(action.SkillName)
+	if !ok {
+		return fmt.Sprintf("未找到 Skill: %s\n\n%s", action.SkillName, h.listSkills()), nil
+	}
+
+	if action.ClusterName == "" {
+		return fmt.Sprintf("请指定集群名称来执行 Skill %s\n\n%s", action.SkillName, h.listClusters()), nil
+	}
+
+	clusterName, clusterCfg, err := h.clusterMgr.FindByPrefix(action.ClusterName)
+	if err != nil {
+		return "", err
+	}
+
+	kubeExec, err := h.getKubeExecutor(clusterName, clusterCfg)
+	if err != nil {
+		return "", fmt.Errorf("connect to cluster %s: %w", clusterName, err)
+	}
+
+	nodes := make([]skill.SSHTarget, 0, len(clusterCfg.SSHNodes))
+	for _, n := range clusterCfg.SSHNodes {
+		nodes = append(nodes, skill.SSHTarget{
+			Name:    n.Name,
+			Host:    n.Host,
+			User:    n.User,
+			KeyFile: n.KeyFile,
+		})
+	}
+
+	sc := &skill.Context{
+		Ctx:         ctx,
+		ClusterName: clusterName,
+		NodeName:    action.NodeName,
+		KubeExec:    kubeExec,
+		SSHExec:     h.sshExec,
+		Nodes:       nodes,
+	}
+
+	output, err := s.Execute(sc)
+	if err != nil {
+		return "", fmt.Errorf("skill %s execution failed: %w", action.SkillName, err)
+	}
+
+	analysis, err := h.analyzer.Analyze(ctx, clusterName, output)
+	if err != nil {
+		return fmt.Sprintf("**集群 %s — %s**\n\n```\n%s\n```\n\nAI 分析失败: %v", clusterName, s.Name(), output, err), nil
+	}
+
+	return fmt.Sprintf("**集群 %s — %s 报告**\n\n%s", clusterName, s.Description(), analysis), nil
 }
 
 func (h *Handler) replyMessage(ctx context.Context, messageID, content string) error {

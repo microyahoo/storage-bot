@@ -18,6 +18,8 @@ import (
 	"github.com/microyahoo/storage-bot/cluster"
 	"github.com/microyahoo/storage-bot/config"
 	"github.com/microyahoo/storage-bot/executor"
+	"github.com/microyahoo/storage-bot/security"
+	"github.com/microyahoo/storage-bot/skill"
 )
 
 func main() {
@@ -44,8 +46,18 @@ func main() {
 	clusterMgr := cluster.NewManager(cfg.Clusters)
 	sshExec := &executor.SSHExecutor{}
 	az := analyzer.NewAnalyzer(llmProvider)
+	skills := skill.NewRegistry()
+	audit := security.NewAuditLog(10000)
 
-	handler := bot.NewHandler(feishuClient, clusterMgr, sshExec, az, llmProvider)
+	handler := bot.NewHandler(feishuClient, clusterMgr, sshExec, az, llmProvider, skills, audit)
+
+	// Config hot-reload: watch file changes + SIGHUP
+	watcher := config.NewWatcher(*configPath)
+	watcher.OnReload(func(newCfg *config.Config) {
+		clusterMgr.Reload(newCfg.Clusters)
+		handler.InvalidateKubeCache()
+		slog.Info("clusters reloaded", "count", len(newCfg.Clusters))
+	})
 
 	eventHandler := dispatcher.NewEventDispatcher("", "").
 		OnP2MessageReceiveV1(func(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
@@ -63,6 +75,8 @@ func main() {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+
+	go watcher.Start(ctx)
 
 	slog.Info("starting storage-bot, connecting to Feishu...")
 

@@ -10,7 +10,8 @@
       "Bash(go version *)",
       "Bash(go mod *)",
       "Bash(go build *)",
-      "Bash(go vet *)"
+      "Bash(go vet *)",
+      "Bash(go test *)"
     ]
   }
 }

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/microyahoo/storage-bot/security"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -50,10 +52,10 @@ func (k *KubeExecutor) findToolboxPod(ctx context.Context) (string, error) {
 	}
 
 	pods, err := k.clientset.CoreV1().Pods(k.namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: "app=rook-ceph-tools",
+		LabelSelector: "app=smd",
 	})
 	if err != nil {
-		return "", fmt.Errorf("list toolbox pods: %w", err)
+		return "", fmt.Errorf("list smd pods: %w", err)
 	}
 
 	for _, pod := range pods.Items {
@@ -78,6 +80,10 @@ func (k *KubeExecutor) findToolboxPod(ctx context.Context) (string, error) {
 }
 
 func (k *KubeExecutor) RunCephCommand(ctx context.Context, args ...string) (string, error) {
+	if err := security.ValidateCephCommand(args); err != nil {
+		return "", err
+	}
+
 	podName, err := k.findToolboxPod(ctx)
 	if err != nil {
 		return "", err

@@ -18,6 +18,8 @@ const (
 	ActionHealth
 	ActionLogAnalysis
 	ActionNodeDiag
+	ActionSkill
+	ActionListSkills
 )
 
 func (t ActionType) String() string {
@@ -32,6 +34,10 @@ func (t ActionType) String() string {
 		return "log analysis"
 	case ActionNodeDiag:
 		return "node diagnostics"
+	case ActionSkill:
+		return "skill"
+	case ActionListSkills:
+		return "list skills"
 	default:
 		return "unknown"
 	}
@@ -41,6 +47,7 @@ type Action struct {
 	Type        ActionType
 	ClusterName string
 	NodeName    string
+	SkillName   string
 	RawMessage  string
 }
 
@@ -48,6 +55,10 @@ var clusterNameRe = regexp.MustCompile(`(?i)cluster[- _]?(\S+)`)
 var nodeNameRe = regexp.MustCompile(`(?i)node[- _]?(\S+)`)
 
 func Parse(message string, knownClusters []string) Action {
+	return ParseWithSkills(message, knownClusters, nil)
+}
+
+func ParseWithSkills(message string, knownClusters []string, knownSkills []string) Action {
 	msg := stripMention(message)
 	action := Action{RawMessage: msg}
 	lower := strings.ToLower(msg)
@@ -61,6 +72,46 @@ func Parse(message string, knownClusters []string) Action {
 		(strings.Contains(lower, "cluster") || strings.Contains(lower, "集群")) {
 		action.Type = ActionListClusters
 		return action
+	}
+
+	if (strings.Contains(lower, "list") || strings.Contains(lower, "列表") || strings.Contains(lower, "哪些")) &&
+		(strings.Contains(lower, "skill") || strings.Contains(lower, "技能") || strings.Contains(lower, "能力")) {
+		action.Type = ActionListSkills
+		return action
+	}
+
+	// Check for skill invocation
+	for _, sk := range knownSkills {
+		if strings.Contains(lower, strings.ToLower(sk)) {
+			action.Type = ActionSkill
+			action.SkillName = sk
+			action.ClusterName = extractClusterName(lower, knownClusters)
+			action.NodeName = extractNodeName(lower)
+			return action
+		}
+	}
+
+	// Skill aliases (Chinese/English keywords → skill names)
+	skillAliases := map[string][]string{
+		"osd_status":  {"osd", "osd状态"},
+		"pg_status":   {"pg"},
+		"pool_status": {"pool", "存储池"},
+		"capacity":    {"容量", "capacity", "空间"},
+		"slow_ops":    {"slow", "慢请求", "慢操作"},
+		"crash":       {"crash", "崩溃"},
+		"mon_status":  {"mon", "monitor", "仲裁"},
+		"io_stat":     {"io", "iostat", "磁盘io"},
+	}
+	for skillName, aliases := range skillAliases {
+		for _, alias := range aliases {
+			if strings.Contains(lower, alias) {
+				action.Type = ActionSkill
+				action.SkillName = skillName
+				action.ClusterName = extractClusterName(lower, knownClusters)
+				action.NodeName = extractNodeName(lower)
+				return action
+			}
+		}
 	}
 
 	action.ClusterName = extractClusterName(lower, knownClusters)
@@ -139,7 +190,7 @@ Rules:
 }
 
 func NeedsFallback(action Action) bool {
-	if action.Type == ActionHelp || action.Type == ActionListClusters {
+	if action.Type == ActionHelp || action.Type == ActionListClusters || action.Type == ActionListSkills {
 		return false
 	}
 	return action.ClusterName == ""

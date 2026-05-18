@@ -1,0 +1,159 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: storage-bot
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: storage-bot-secrets
+  namespace: storage-bot
+type: Opaque
+stringData:
+  feishu-app-id: "cli_xxxxxxxxxxxx"
+  feishu-app-secret: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  llm-api-key: "sk-xxxxx"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: storage-bot-config
+  namespace: storage-bot
+data:
+  config.yaml: |
+    feishu:
+      app_id: "${FEISHU_APP_ID}"
+      app_secret: "${FEISHU_APP_SECRET}"
+
+    llm:
+      provider: "claude"
+      api_key: "${LLM_API_KEY}"
+      model: ""
+
+    clusters:
+      cluster-01:
+        kubeconfig: "/etc/storage-bot/kubeconfigs/cluster-01"
+        namespace: "rook-ceph"
+        ssh_nodes:
+          - name: "node-1"
+            host: "10.0.1.1:22"
+            user: "root"
+            key_file: "/etc/storage-bot/ssh/id_rsa"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: storage-bot-kubeconfigs
+  namespace: storage-bot
+data: {}
+  # cluster-01: |
+  #   <kubeconfig content>
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: storage-bot-ssh-keys
+  namespace: storage-bot
+type: Opaque
+data: {}
+  # id_rsa: <base64-encoded SSH private key>
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: storage-bot
+  namespace: storage-bot
+  labels:
+    app: storage-bot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: storage-bot
+  template:
+    metadata:
+      labels:
+        app: storage-bot
+    spec:
+      serviceAccountName: storage-bot
+      containers:
+        - name: storage-bot
+          image: storage-bot:latest
+          args:
+            - --config
+            - /etc/storage-bot/config.yaml
+          env:
+            - name: FEISHU_APP_ID
+              valueFrom:
+                secretKeyRef:
+                  name: storage-bot-secrets
+                  key: feishu-app-id
+            - name: FEISHU_APP_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: storage-bot-secrets
+                  key: feishu-app-secret
+            - name: LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: storage-bot-secrets
+                  key: llm-api-key
+          volumeMounts:
+            - name: config
+              mountPath: /etc/storage-bot
+              readOnly: true
+            - name: kubeconfigs
+              mountPath: /etc/storage-bot/kubeconfigs
+              readOnly: true
+            - name: ssh-keys
+              mountPath: /etc/storage-bot/ssh
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+      volumes:
+        - name: config
+          configMap:
+            name: storage-bot-config
+        - name: kubeconfigs
+          configMap:
+            name: storage-bot-kubeconfigs
+        - name: ssh-keys
+          secret:
+            secretName: storage-bot-ssh-keys
+            defaultMode: 0600
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: storage-bot
+  namespace: storage-bot
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: storage-bot
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/exec"]
+    verbs: ["get", "list", "create"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: storage-bot
+subjects:
+  - kind: ServiceAccount
+    name: storage-bot
+    namespace: storage-bot
+roleRef:
+  kind: ClusterRole
+  name: storage-bot
+  apiGroup: rbac.authorization.k8s.io

@@ -9,12 +9,17 @@ import (
 	"time"
 
 	"github.com/microyahoo/storage-bot/config"
+	"github.com/microyahoo/storage-bot/security"
 	"golang.org/x/crypto/ssh"
 )
 
 type SSHExecutor struct{}
 
 func (s *SSHExecutor) Run(ctx context.Context, node config.SSHNode, cmd string) (string, error) {
+	if err := security.ValidateSSHCommand(cmd); err != nil {
+		return "", err
+	}
+
 	client, err := s.dial(ctx, node)
 	if err != nil {
 		return "", err
