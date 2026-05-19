@@ -16,9 +16,13 @@ type AuditEntry struct {
 	Status      string
 }
 
+// AuditLog stores audit entries in a fixed-size ring buffer.
+// Memory usage is bounded by maxSize regardless of how many entries are recorded.
 type AuditLog struct {
 	mu      sync.Mutex
-	entries []AuditEntry
+	buf     []AuditEntry
+	head    int
+	count   int
 	maxSize int
 }
 
@@ -26,7 +30,10 @@ func NewAuditLog(maxSize int) *AuditLog {
 	if maxSize <= 0 {
 		maxSize = 10000
 	}
-	return &AuditLog{maxSize: maxSize}
+	return &AuditLog{
+		buf:     make([]AuditEntry, maxSize),
+		maxSize: maxSize,
+	}
 }
 
 func (a *AuditLog) Record(user, clusterName, action, command, status string) {
@@ -50,21 +57,41 @@ func (a *AuditLog) Record(user, clusterName, action, command, status string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	a.entries = append(a.entries, entry)
-	if len(a.entries) > a.maxSize {
-		a.entries = a.entries[len(a.entries)-a.maxSize:]
+	if a.count < a.maxSize {
+		a.buf[a.count] = entry
+		a.count++
+		return
 	}
+
+	// overwrite the oldest entry, clearing its string references first
+	a.buf[a.head] = entry
+	a.head = (a.head + 1) % a.maxSize
 }
 
 func (a *AuditLog) Recent(n int) []AuditEntry {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	if n > len(a.entries) {
-		n = len(a.entries)
+	if n > a.count {
+		n = a.count
 	}
+	if n <= 0 {
+		return nil
+	}
+
 	result := make([]AuditEntry, n)
-	copy(result, a.entries[len(a.entries)-n:])
+
+	// start position of the n most-recent entries
+	var start int
+	if a.count < a.maxSize {
+		start = a.count - n
+	} else {
+		start = (a.head + a.count - n) % a.maxSize
+	}
+
+	for i := 0; i < n; i++ {
+		result[i] = a.buf[(start+i)%a.maxSize]
+	}
 	return result
 }
 

@@ -13,6 +13,14 @@ llm:
   model: ""                                # optional, auto-selected per provider
   base_url: ""                             # optional, override API endpoint
 
+# Development / testing flags
+# - disable_llm: skip LLM intent fallback + AI analysis. Replies show raw diagnostics.
+# - dry_run: skip command execution. Replies show what WOULD have been executed.
+# Both default to false (production mode).
+dev:
+  disable_llm: false
+  dry_run: false
+
 # --- Provider examples ---
 #
 # Claude (default):
@@ -34,31 +42,42 @@ llm:
 #   provider: "local"
 #   model: "qwen2.5:14b"
 #   base_url: "http://localhost:11434/v1"
-#
-# Local (vLLM):
-#   provider: "local"
-#   model: "Qwen/Qwen2.5-14B-Instruct"
-#   base_url: "http://localhost:8000/v1"
 
 clusters:
   cluster-01:
-    kubeconfig: "/path/to/cluster-01/kubeconfig"
+    kubeconfig: "/etc/storage-bot/kubeconfigs/cluster-01"
     namespace: "rook-ceph"           # optional, default: rook-ceph
-    toolbox_pod: ""                  # optional
+    toolbox_pod: "rook-ceph-tools"   # optional, default: rook-ceph-tools
+
+    # server_override replaces the apiserver URL embedded in the kubeconfig.
+    # Required when the kubeconfig was generated with 127.0.0.1 (kubeadm default)
+    # or an internal DNS name that the storage-bot pod cannot resolve/reach.
+    # Set this to the apiserver address reachable from where the bot runs:
+    #   - the master node IP, with apiserver listening externally
+    #   - a LoadBalancer IP / NodePort
+    #   - a VPN-internal address
+    server_override: "https://10.0.1.10:6443"
+
+    # Skip apiserver TLS verification. Use only when server_override points to an
+    # address not in the apiserver cert SANs. Prefer regenerating the cert with
+    # the right SANs instead of skipping verification.
+    insecure_skip_tls_verify: false
+
     ssh_nodes:
       - name: "node-1"
         host: "10.0.1.1:22"
         user: "root"
-        key_file: "/root/.ssh/id_rsa"
+        key_file: "/etc/storage-bot/ssh/id_rsa"
       - name: "node-2"
         host: "10.0.1.2:22"
         user: "root"
-        key_file: "/root/.ssh/id_rsa"
+        key_file: "/etc/storage-bot/ssh/id_rsa"
 
   cluster-02:
-    kubeconfig: "/path/to/cluster-02/kubeconfig"
+    kubeconfig: "/etc/storage-bot/kubeconfigs/cluster-02"
+    server_override: "https://10.0.2.10:6443"
     ssh_nodes:
       - name: "node-1"
         host: "10.0.2.1:22"
         user: "root"
-        key_file: "/root/.ssh/id_rsa"
+        key_file: "/etc/storage-bot/ssh/id_rsa"

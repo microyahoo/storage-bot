@@ -10,7 +10,17 @@ import (
 type Config struct {
 	Feishu   FeishuConfig              `yaml:"feishu"`
 	LLM      LLMConfig                 `yaml:"llm"`
+	Dev      DevConfig                 `yaml:"dev"`
 	Clusters map[string]*ClusterConfig `yaml:"clusters"`
+}
+
+type DevConfig struct {
+	// DisableLLM turns off LLM intent fallback and AI analysis.
+	// Replies show raw diagnostics + which action would have been taken.
+	DisableLLM bool `yaml:"disable_llm"`
+	// DryRun stops the bot from running any ceph/SSH command.
+	// Replies show the command that would have been executed.
+	DryRun bool `yaml:"dry_run"`
 }
 
 type FeishuConfig struct {
@@ -26,10 +36,18 @@ type LLMConfig struct {
 }
 
 type ClusterConfig struct {
-	Kubeconfig string    `yaml:"kubeconfig"`
-	Namespace  string    `yaml:"namespace"`
-	ToolboxPod string    `yaml:"toolbox_pod"`
-	SSHNodes   []SSHNode `yaml:"ssh_nodes"`
+	Kubeconfig string `yaml:"kubeconfig"`
+	Namespace  string `yaml:"namespace"`
+	ToolboxPod string `yaml:"toolbox_pod"`
+	// ServerOverride replaces the apiserver URL embedded in the kubeconfig.
+	// Useful when the kubeconfig was generated with 127.0.0.1 / internal DNS
+	// that the bot pod cannot reach. Example: "https://10.0.1.10:6443".
+	// Leave empty to use whatever the kubeconfig contains.
+	ServerOverride string `yaml:"server_override"`
+	// InsecureSkipTLSVerify skips apiserver TLS verification.
+	// Only set true when ServerOverride bypasses the CA SAN. Prefer fixing the CA instead.
+	InsecureSkipTLSVerify bool      `yaml:"insecure_skip_tls_verify"`
+	SSHNodes              []SSHNode `yaml:"ssh_nodes"`
 }
 
 type SSHNode struct {
@@ -88,8 +106,8 @@ func Load(path string) (*Config, error) {
 	if cfg.Feishu.AppID == "" || cfg.Feishu.AppSecret == "" {
 		return nil, fmt.Errorf("feishu app_id and app_secret are required")
 	}
-	if cfg.LLM.APIKey == "" && cfg.LLM.Provider != "local" && cfg.LLM.Provider != "ollama" {
-		return nil, fmt.Errorf("llm api_key is required (config or LLM_API_KEY env)")
+	if cfg.LLM.APIKey == "" && cfg.LLM.Provider != "local" && cfg.LLM.Provider != "ollama" && !cfg.Dev.DisableLLM {
+		return nil, fmt.Errorf("llm api_key is required (config or LLM_API_KEY env), or set dev.disable_llm: true")
 	}
 
 	return &cfg, nil

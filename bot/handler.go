@@ -29,11 +29,12 @@ type Handler struct {
 	llm          analyzer.LLMProvider
 	skills       *skill.Registry
 	audit        *security.AuditLog
+	dev          config.DevConfig
 	kubeCache    map[string]*executor.KubeExecutor
 	mu           sync.Mutex
 }
 
-func NewHandler(feishuClient *lark.Client, mgr *cluster.Manager, sshExec *executor.SSHExecutor, az *analyzer.Analyzer, llm analyzer.LLMProvider, skills *skill.Registry, audit *security.AuditLog) *Handler {
+func NewHandler(feishuClient *lark.Client, mgr *cluster.Manager, sshExec *executor.SSHExecutor, az *analyzer.Analyzer, llm analyzer.LLMProvider, skills *skill.Registry, audit *security.AuditLog, dev config.DevConfig) *Handler {
 	return &Handler{
 		feishuClient: feishuClient,
 		clusterMgr:   mgr,
@@ -42,6 +43,7 @@ func NewHandler(feishuClient *lark.Client, mgr *cluster.Manager, sshExec *execut
 		llm:          llm,
 		skills:       skills,
 		audit:        audit,
+		dev:          dev,
 		kubeCache:    make(map[string]*executor.KubeExecutor),
 	}
 }
@@ -78,7 +80,7 @@ func (h *Handler) HandleMessage(ctx context.Context, event *larkim.P2MessageRece
 	}
 	action := intent.ParseWithSkills(sanitized, h.clusterMgr.List(), knownSkills)
 
-	if intent.NeedsFallback(action) {
+	if intent.NeedsFallback(action) && !h.dev.DisableLLM && h.llm != nil {
 		slog.Info("regex parse incomplete, trying LLM fallback", "raw", sanitized)
 		llmAction, err := intent.ParseWithLLM(ctx, sanitized, h.clusterMgr.List(), h.llm)
 		if err != nil {
@@ -86,6 +88,8 @@ func (h *Handler) HandleMessage(ctx context.Context, event *larkim.P2MessageRece
 		} else {
 			action = llmAction
 		}
+	} else if intent.NeedsFallback(action) && h.dev.DisableLLM {
+		slog.Info("[dev] LLM fallback disabled, using regex result as-is", "raw", sanitized)
 	}
 
 	slog.Info("parsed intent", "type", action.Type, "cluster", action.ClusterName, "node", action.NodeName)
@@ -138,6 +142,10 @@ func (h *Handler) handleHealth(ctx context.Context, action intent.Action) (strin
 		return "", err
 	}
 
+	if h.dev.DryRun {
+		return h.dryRunReply(clusterName, "health", "ceph status / health detail / osd tree / df"), nil
+	}
+
 	kubeExec, err := h.getKubeExecutor(clusterName, clusterCfg)
 	if err != nil {
 		return "", fmt.Errorf("connect to cluster %s: %w", clusterName, err)
@@ -148,12 +156,7 @@ func (h *Handler) handleHealth(ctx context.Context, action intent.Action) (strin
 		return "", fmt.Errorf("get ceph health: %w", err)
 	}
 
-	analysis, err := h.analyzer.Analyze(ctx, clusterName, diagnostics)
-	if err != nil {
-		return fmt.Sprintf("**集群 %s 诊断数据:**\n```\n%s\n```\n\nAI 分析失败: %v", clusterName, diagnostics, err), nil
-	}
-
-	return fmt.Sprintf("**集群 %s 健康检查报告**\n\n%s", clusterName, analysis), nil
+	return h.analyzeOrEcho(ctx, clusterName, "健康检查", diagnostics), nil
 }
 
 func (h *Handler) handleLogAnalysis(ctx context.Context, action intent.Action) (string, error) {
@@ -179,6 +182,10 @@ func (h *Handler) handleLogAnalysis(ctx context.Context, action intent.Action) (
 		}
 	}
 
+	if h.dev.DryRun {
+		return h.dryRunReply(clusterName, "log analysis", "ssh to nodes, read /var/log/messages, /var/lib/rook/rook-ceph/log/*"), nil
+	}
+
 	for _, node := range targetNodes {
 		logs, err := h.sshExec.CollectLogs(ctx, node)
 		if err != nil {
@@ -189,12 +196,7 @@ func (h *Handler) handleLogAnalysis(ctx context.Context, action intent.Action) (
 	}
 
 	diagnostics := strings.Join(allLogs, "\n\n")
-	analysis, err := h.analyzer.Analyze(ctx, clusterName, diagnostics)
-	if err != nil {
-		return fmt.Sprintf("AI 分析失败: %v\n\n原始日志已收集 (%d bytes)", err, len(diagnostics)), nil
-	}
-
-	return fmt.Sprintf("**集群 %s 日志分析报告**\n\n%s", clusterName, analysis), nil
+	return h.analyzeOrEcho(ctx, clusterName, "日志分析", diagnostics), nil
 }
 
 func (h *Handler) handleNodeDiag(ctx context.Context, action intent.Action) (string, error) {
@@ -217,17 +219,16 @@ func (h *Handler) handleNodeDiag(ctx context.Context, action intent.Action) (str
 	}
 
 	node := nodes[0]
+	if h.dev.DryRun {
+		return h.dryRunReply(clusterName, "node diag on "+node.Name, "ssh: dmesg, df, free, ps, ip, uptime"), nil
+	}
+
 	diagnostics, err := h.sshExec.NodeDiagnostics(ctx, node)
 	if err != nil {
 		return "", fmt.Errorf("node diagnostics for %s: %w", node.Name, err)
 	}
 
-	analysis, err := h.analyzer.Analyze(ctx, clusterName, diagnostics)
-	if err != nil {
-		return fmt.Sprintf("AI 分析失败: %v\n\n原始数据:\n```\n%s\n```", err, diagnostics), nil
-	}
-
-	return fmt.Sprintf("**集群 %s 节点 %s 诊断报告**\n\n%s", clusterName, node.Name, analysis), nil
+	return h.analyzeOrEcho(ctx, clusterName, fmt.Sprintf("节点 %s 诊断", node.Name), diagnostics), nil
 }
 
 func (h *Handler) helpMessage() string {
@@ -292,6 +293,10 @@ func (h *Handler) handleSkill(ctx context.Context, action intent.Action) (string
 		return "", err
 	}
 
+	if h.dev.DryRun {
+		return h.dryRunReply(clusterName, "skill: "+s.Name(), s.Description()), nil
+	}
+
 	kubeExec, err := h.getKubeExecutor(clusterName, clusterCfg)
 	if err != nil {
 		return "", fmt.Errorf("connect to cluster %s: %w", clusterName, err)
@@ -321,12 +326,24 @@ func (h *Handler) handleSkill(ctx context.Context, action intent.Action) (string
 		return "", fmt.Errorf("skill %s execution failed: %w", action.SkillName, err)
 	}
 
-	analysis, err := h.analyzer.Analyze(ctx, clusterName, output)
-	if err != nil {
-		return fmt.Sprintf("**集群 %s — %s**\n\n```\n%s\n```\n\nAI 分析失败: %v", clusterName, s.Name(), output, err), nil
+	return h.analyzeOrEcho(ctx, clusterName, s.Description(), output), nil
+}
+
+// analyzeOrEcho returns AI analysis under normal mode, or raw output under dev mode.
+func (h *Handler) analyzeOrEcho(ctx context.Context, clusterName, title, diagnostics string) string {
+	if h.dev.DisableLLM || h.analyzer == nil {
+		return fmt.Sprintf("**集群 %s — %s [dev mode, LLM disabled]**\n\n```\n%s\n```", clusterName, title, diagnostics)
 	}
 
-	return fmt.Sprintf("**集群 %s — %s 报告**\n\n%s", clusterName, s.Description(), analysis), nil
+	analysis, err := h.analyzer.Analyze(ctx, clusterName, diagnostics)
+	if err != nil {
+		return fmt.Sprintf("**集群 %s — %s**\n\n```\n%s\n```\n\nAI 分析失败: %v", clusterName, title, diagnostics, err)
+	}
+	return fmt.Sprintf("**集群 %s — %s 报告**\n\n%s", clusterName, title, analysis)
+}
+
+func (h *Handler) dryRunReply(clusterName, action, willDo string) string {
+	return fmt.Sprintf("**[dry-run] 集群 %s**\n\n动作: %s\n将要执行: %s\n\n(dev.dry_run = true, 未实际执行任何命令)", clusterName, action, willDo)
 }
 
 func (h *Handler) replyMessage(ctx context.Context, messageID, content string) error {
@@ -359,7 +376,13 @@ func (h *Handler) getKubeExecutor(clusterName string, cfg *config.ClusterConfig)
 		return ke, nil
 	}
 
-	ke, err := executor.NewKubeExecutor(cfg.Kubeconfig, cfg.Namespace, cfg.ToolboxPod)
+	ke, err := executor.NewKubeExecutorWithOptions(executor.KubeExecutorOptions{
+		KubeconfigPath:        cfg.Kubeconfig,
+		Namespace:             cfg.Namespace,
+		ToolboxPodHint:        cfg.ToolboxPod,
+		ServerOverride:        cfg.ServerOverride,
+		InsecureSkipTLSVerify: cfg.InsecureSkipTLSVerify,
+	})
 	if err != nil {
 		return nil, err
 	}

@@ -24,10 +24,35 @@ type KubeExecutor struct {
 	toolboxPod string
 }
 
+type KubeExecutorOptions struct {
+	KubeconfigPath        string
+	Namespace             string
+	ToolboxPodHint        string
+	ServerOverride        string
+	InsecureSkipTLSVerify bool
+}
+
 func NewKubeExecutor(kubeconfigPath, namespace, toolboxPodHint string) (*KubeExecutor, error) {
-	restConfig, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	return NewKubeExecutorWithOptions(KubeExecutorOptions{
+		KubeconfigPath: kubeconfigPath,
+		Namespace:      namespace,
+		ToolboxPodHint: toolboxPodHint,
+	})
+}
+
+func NewKubeExecutorWithOptions(opts KubeExecutorOptions) (*KubeExecutor, error) {
+	restConfig, err := clientcmd.BuildConfigFromFlags("", opts.KubeconfigPath)
 	if err != nil {
 		return nil, fmt.Errorf("build kubeconfig: %w", err)
+	}
+
+	if opts.ServerOverride != "" {
+		restConfig.Host = opts.ServerOverride
+	}
+	if opts.InsecureSkipTLSVerify {
+		restConfig.TLSClientConfig.Insecure = true
+		restConfig.TLSClientConfig.CAData = nil
+		restConfig.TLSClientConfig.CAFile = ""
 	}
 
 	clientset, err := kubernetes.NewForConfig(restConfig)
@@ -38,8 +63,8 @@ func NewKubeExecutor(kubeconfigPath, namespace, toolboxPodHint string) (*KubeExe
 	return &KubeExecutor{
 		restConfig: restConfig,
 		clientset:  clientset,
-		namespace:  namespace,
-		toolboxPod: toolboxPodHint,
+		namespace:  opts.Namespace,
+		toolboxPod: opts.ToolboxPodHint,
 	}, nil
 }
 

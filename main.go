@@ -34,22 +34,36 @@ func main() {
 		os.Exit(1)
 	}
 
-	slog.Info("config loaded", "clusters", len(cfg.Clusters), "llm_provider", cfg.LLM.Provider, "llm_model", cfg.LLM.Model)
+	slog.Info("config loaded",
+		"clusters", len(cfg.Clusters),
+		"llm_provider", cfg.LLM.Provider,
+		"llm_model", cfg.LLM.Model,
+		"dev_disable_llm", cfg.Dev.DisableLLM,
+		"dev_dry_run", cfg.Dev.DryRun,
+	)
 
-	llmProvider, err := analyzer.NewProvider(cfg.LLM)
-	if err != nil {
-		slog.Error("failed to create LLM provider", "error", err)
-		os.Exit(1)
+	var (
+		llmProvider analyzer.LLMProvider
+		az          *analyzer.Analyzer
+	)
+	if !cfg.Dev.DisableLLM {
+		llmProvider, err = analyzer.NewProvider(cfg.LLM)
+		if err != nil {
+			slog.Error("failed to create LLM provider", "error", err)
+			os.Exit(1)
+		}
+		az = analyzer.NewAnalyzer(llmProvider)
+	} else {
+		slog.Warn("dev.disable_llm = true, LLM is disabled; intent fallback skipped, analysis returns raw output")
 	}
 
 	feishuClient := lark.NewClient(cfg.Feishu.AppID, cfg.Feishu.AppSecret)
 	clusterMgr := cluster.NewManager(cfg.Clusters)
 	sshExec := &executor.SSHExecutor{}
-	az := analyzer.NewAnalyzer(llmProvider)
 	skills := skill.NewRegistry()
 	audit := security.NewAuditLog(10000)
 
-	handler := bot.NewHandler(feishuClient, clusterMgr, sshExec, az, llmProvider, skills, audit)
+	handler := bot.NewHandler(feishuClient, clusterMgr, sshExec, az, llmProvider, skills, audit, cfg.Dev)
 
 	// Config hot-reload: watch file changes + SIGHUP
 	watcher := config.NewWatcher(*configPath)
