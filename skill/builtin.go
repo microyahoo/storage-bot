@@ -102,6 +102,34 @@ func (s *IOStat) Execute(sc *Context) (string, error) {
 	return strings.Join(results, "\n\n"), nil
 }
 
+type ListNodes struct{}
+
+func (s *ListNodes) Name() string        { return "list_nodes" }
+func (s *ListNodes) Description() string  { return "获取集群所有节点信息（名称、IP、角色）" }
+func (s *ListNodes) Execute(sc *Context) (string, error) {
+	if sc.KubeExec == nil {
+		return "", fmt.Errorf("no kubernetes connection available")
+	}
+
+	nodes, err := sc.KubeExec.DiscoverNodes(sc.Ctx)
+	if err != nil {
+		return "", fmt.Errorf("discover nodes: %w", err)
+	}
+
+	if len(nodes) == 0 {
+		return "未发现节点", nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("集群 %s 共 %d 个节点:\n\n", sc.ClusterName, len(nodes)))
+	sb.WriteString(fmt.Sprintf("%-40s  %s\n", "NODE NAME", "INTERNAL IP"))
+	sb.WriteString(strings.Repeat("-", 60) + "\n")
+	for _, n := range nodes {
+		sb.WriteString(fmt.Sprintf("%-40s  %s\n", n.Name, n.InternalIP))
+	}
+	return sb.String(), nil
+}
+
 func runCephCommands(sc *Context, commands []string) (string, error) {
 	if sc.KubeExec == nil {
 		return "", fmt.Errorf("no kubernetes connection available")

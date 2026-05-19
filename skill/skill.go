@@ -42,6 +42,7 @@ func NewRegistry() *Registry {
 	r.Register(&CrashReport{})
 	r.Register(&MonStatus{})
 	r.Register(&IOStat{})
+	r.Register(&ListNodes{})
 	return r
 }
 

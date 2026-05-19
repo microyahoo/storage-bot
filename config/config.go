@@ -8,10 +8,11 @@ import (
 )
 
 type Config struct {
-	Feishu   FeishuConfig              `yaml:"feishu"`
-	LLM      LLMConfig                 `yaml:"llm"`
-	Dev      DevConfig                 `yaml:"dev"`
-	Clusters map[string]*ClusterConfig `yaml:"clusters"`
+	Feishu        FeishuConfig              `yaml:"feishu"`
+	LLM           LLMConfig                 `yaml:"llm"`
+	Dev           DevConfig                 `yaml:"dev"`
+	Clusters      map[string]*ClusterConfig `yaml:"clusters"`
+	RESTStorages  map[string]*RESTStorageConfig `yaml:"rest_storages"`
 }
 
 type DevConfig struct {
@@ -40,14 +41,14 @@ type ClusterConfig struct {
 	Namespace  string `yaml:"namespace"`
 	ToolboxPod string `yaml:"toolbox_pod"`
 	// ServerOverride replaces the apiserver URL embedded in the kubeconfig.
-	// Useful when the kubeconfig was generated with 127.0.0.1 / internal DNS
-	// that the bot pod cannot reach. Example: "https://10.0.1.10:6443".
-	// Leave empty to use whatever the kubeconfig contains.
-	ServerOverride string `yaml:"server_override"`
-	// InsecureSkipTLSVerify skips apiserver TLS verification.
-	// Only set true when ServerOverride bypasses the CA SAN. Prefer fixing the CA instead.
-	InsecureSkipTLSVerify bool      `yaml:"insecure_skip_tls_verify"`
-	SSHNodes              []SSHNode `yaml:"ssh_nodes"`
+	ServerOverride        string `yaml:"server_override"`
+	InsecureSkipTLSVerify bool   `yaml:"insecure_skip_tls_verify"`
+	// GatewayNode is the one node that is configured in yaml.
+	// All other nodes are auto-discovered via kubectl get nodes and accessed
+	// over SSH using this node's credentials (passwordless root SSH assumed).
+	// If ssh_nodes is also set, those override the auto-discovered list.
+	GatewayNode *SSHNode  `yaml:"gateway_node"`
+	SSHNodes    []SSHNode `yaml:"ssh_nodes"`
 }
 
 type SSHNode struct {
@@ -55,6 +56,21 @@ type SSHNode struct {
 	Host    string `yaml:"host"`
 	User    string `yaml:"user"`
 	KeyFile string `yaml:"key_file"`
+}
+
+// RESTStorageConfig represents a non-Ceph storage system accessible via REST API.
+type RESTStorageConfig struct {
+	BaseURL string `yaml:"base_url"`
+	APIKey  string `yaml:"api_key"`
+	// Endpoints configures which API paths to call.
+	Endpoints RESTEndpointsConfig `yaml:"endpoints"`
+}
+
+type RESTEndpointsConfig struct {
+	ClusterInfo string `yaml:"cluster_info"`
+	// DirUsage may contain %s for the path argument, e.g. "/api/usage?path=%s"
+	DirUsage    string `yaml:"dir_usage"`
+	HealthCheck string `yaml:"health_check"`
 }
 
 func Load(path string) (*Config, error) {

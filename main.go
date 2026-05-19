@@ -20,6 +20,7 @@ import (
 	"github.com/microyahoo/storage-bot/executor"
 	"github.com/microyahoo/storage-bot/security"
 	"github.com/microyahoo/storage-bot/skill"
+	"github.com/microyahoo/storage-bot/storage"
 )
 
 func main() {
@@ -65,6 +66,17 @@ func main() {
 
 	handler := bot.NewHandler(feishuClient, clusterMgr, sshExec, az, llmProvider, skills, audit, cfg.Dev)
 
+	// Register REST storage backends
+	for name, restCfg := range cfg.RESTStorages {
+		backend := storage.NewRESTBackend(name, restCfg.BaseURL, restCfg.APIKey, storage.RESTEndpoints{
+			ClusterInfo: restCfg.Endpoints.ClusterInfo,
+			DirUsage:    restCfg.Endpoints.DirUsage,
+			HealthCheck: restCfg.Endpoints.HealthCheck,
+		})
+		handler.AddRESTStorage(name, storage.NewRESTSkill(name, backend))
+		slog.Info("registered REST storage", "name", name, "base_url", restCfg.BaseURL)
+	}
+
 	// Config hot-reload: watch file changes + SIGHUP
 	watcher := config.NewWatcher(*configPath)
 	watcher.OnReload(func(newCfg *config.Config) {
@@ -80,6 +92,28 @@ func main() {
 					slog.Error("handle message failed", "error", err)
 				}
 			}()
+			return nil
+		}).
+		// Register no-op handlers for common events we don't process.
+		// Without these the SDK logs [Error] "not found handler" for every reaction/read/recall.
+		OnP2MessageReactionCreatedV1(func(ctx context.Context, event *larkim.P2MessageReactionCreatedV1) error {
+			return nil
+		}).
+		OnP2MessageReactionDeletedV1(func(ctx context.Context, event *larkim.P2MessageReactionDeletedV1) error {
+			return nil
+		}).
+		OnP2MessageReadV1(func(ctx context.Context, event *larkim.P2MessageReadV1) error {
+			return nil
+		}).
+		OnP2MessageRecalledV1(func(ctx context.Context, event *larkim.P2MessageRecalledV1) error {
+			return nil
+		}).
+		OnP2ChatMemberBotAddedV1(func(ctx context.Context, event *larkim.P2ChatMemberBotAddedV1) error {
+			slog.Info("bot added to chat")
+			return nil
+		}).
+		OnP2ChatMemberBotDeletedV1(func(ctx context.Context, event *larkim.P2ChatMemberBotDeletedV1) error {
+			slog.Info("bot removed from chat")
 			return nil
 		})
 

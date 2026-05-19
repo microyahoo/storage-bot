@@ -20,6 +20,7 @@ const (
 	ActionNodeDiag
 	ActionSkill
 	ActionListSkills
+	ActionRESTStorage // query a non-Ceph REST storage system
 )
 
 func (t ActionType) String() string {
@@ -38,6 +39,8 @@ func (t ActionType) String() string {
 		return "skill"
 	case ActionListSkills:
 		return "list skills"
+	case ActionRESTStorage:
+		return "rest storage"
 	default:
 		return "unknown"
 	}
@@ -48,6 +51,7 @@ type Action struct {
 	ClusterName string
 	NodeName    string
 	SkillName   string
+	StorageName string // for ActionRESTStorage
 	RawMessage  string
 }
 
@@ -59,6 +63,10 @@ func Parse(message string, knownClusters []string) Action {
 }
 
 func ParseWithSkills(message string, knownClusters []string, knownSkills []string) Action {
+	return ParseWithAll(message, knownClusters, knownSkills, nil)
+}
+
+func ParseWithAll(message string, knownClusters []string, knownSkills []string, knownRESTStorages []string) Action {
 	msg := stripMention(message)
 	action := Action{RawMessage: msg}
 	lower := strings.ToLower(msg)
@@ -101,6 +109,7 @@ func ParseWithSkills(message string, knownClusters []string, knownSkills []strin
 		"crash":       {"crash", "崩溃"},
 		"mon_status":  {"mon", "monitor", "仲裁"},
 		"io_stat":     {"io", "iostat", "磁盘io"},
+		"list_nodes":  {"节点列表", "所有节点", "list nodes", "list_nodes"},
 	}
 	for skillName, aliases := range skillAliases {
 		for _, alias := range aliases {
@@ -111,6 +120,16 @@ func ParseWithSkills(message string, knownClusters []string, knownSkills []strin
 				action.NodeName = extractNodeName(lower)
 				return action
 			}
+		}
+	}
+
+	// Check for REST storage invocation (matched by name)
+	for _, storageName := range knownRESTStorages {
+		if strings.Contains(lower, strings.ToLower(storageName)) {
+			action.Type = ActionRESTStorage
+			action.StorageName = storageName
+			action.RawMessage = msg
+			return action
 		}
 	}
 

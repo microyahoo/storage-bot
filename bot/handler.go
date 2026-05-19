@@ -19,6 +19,7 @@ import (
 	"github.com/microyahoo/storage-bot/intent"
 	"github.com/microyahoo/storage-bot/security"
 	"github.com/microyahoo/storage-bot/skill"
+	"github.com/microyahoo/storage-bot/storage"
 )
 
 type Handler struct {
@@ -28,6 +29,7 @@ type Handler struct {
 	analyzer     *analyzer.Analyzer
 	llm          analyzer.LLMProvider
 	skills       *skill.Registry
+	restStorages map[string]*storage.RESTSkill
 	audit        *security.AuditLog
 	dev          config.DevConfig
 	kubeCache    map[string]*executor.KubeExecutor
@@ -42,10 +44,27 @@ func NewHandler(feishuClient *lark.Client, mgr *cluster.Manager, sshExec *execut
 		analyzer:     az,
 		llm:          llm,
 		skills:       skills,
+		restStorages: make(map[string]*storage.RESTSkill),
 		audit:        audit,
 		dev:          dev,
 		kubeCache:    make(map[string]*executor.KubeExecutor),
 	}
+}
+
+func (h *Handler) AddRESTStorage(name string, s *storage.RESTSkill) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.restStorages[name] = s
+}
+
+func (h *Handler) ListRESTStorages() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	names := make([]string, 0, len(h.restStorages))
+	for name := range h.restStorages {
+		names = append(names, name)
+	}
+	return names
 }
 
 func (h *Handler) InvalidateKubeCache() {
@@ -78,7 +97,7 @@ func (h *Handler) HandleMessage(ctx context.Context, event *larkim.P2MessageRece
 	for _, s := range h.skills.List() {
 		knownSkills = append(knownSkills, s.Name())
 	}
-	action := intent.ParseWithSkills(sanitized, h.clusterMgr.List(), knownSkills)
+	action := intent.ParseWithAll(sanitized, h.clusterMgr.List(), knownSkills, h.ListRESTStorages())
 
 	if intent.NeedsFallback(action) && !h.dev.DisableLLM && h.llm != nil {
 		slog.Info("regex parse incomplete, trying LLM fallback", "raw", sanitized)
@@ -117,6 +136,8 @@ func (h *Handler) HandleMessage(ctx context.Context, event *larkim.P2MessageRece
 		reply, err = h.handleLogAnalysis(ctx, action)
 	case intent.ActionNodeDiag:
 		reply, err = h.handleNodeDiag(ctx, action)
+	case intent.ActionRESTStorage:
+		reply, err = h.handleRESTStorage(ctx, action)
 	}
 
 	status := "ok"
@@ -169,14 +190,18 @@ func (h *Handler) handleLogAnalysis(ctx context.Context, action intent.Action) (
 		return "", err
 	}
 
-	if len(clusterCfg.SSHNodes) == 0 {
-		return fmt.Sprintf("集群 %s 没有配置 SSH 节点", clusterName), nil
+	allSSHNodes, err := h.clusterMgr.ResolveSSHNodes(ctx, clusterName, clusterCfg)
+	if err != nil {
+		return "", fmt.Errorf("resolve nodes for %s: %w", clusterName, err)
+	}
+	if len(allSSHNodes) == 0 {
+		return fmt.Sprintf("集群 %s 没有配置 SSH 节点，请配置 gateway_node 或 ssh_nodes", clusterName), nil
 	}
 
 	var allLogs []string
-	targetNodes := clusterCfg.SSHNodes
+	targetNodes := allSSHNodes
 	if action.NodeName != "" {
-		targetNodes = filterNodes(clusterCfg.SSHNodes, action.NodeName)
+		targetNodes = filterNodes(allSSHNodes, action.NodeName)
 		if len(targetNodes) == 0 {
 			return fmt.Sprintf("集群 %s 中未找到节点 %s", clusterName, action.NodeName), nil
 		}
@@ -213,7 +238,12 @@ func (h *Handler) handleNodeDiag(ctx context.Context, action intent.Action) (str
 		return "请指定节点名称，例如: check node-1 cluster-01", nil
 	}
 
-	nodes := filterNodes(clusterCfg.SSHNodes, action.NodeName)
+	allSSHNodes, err := h.clusterMgr.ResolveSSHNodes(ctx, clusterName, clusterCfg)
+	if err != nil {
+		return "", fmt.Errorf("resolve nodes for %s: %w", clusterName, err)
+	}
+
+	nodes := filterNodes(allSSHNodes, action.NodeName)
 	if len(nodes) == 0 {
 		return fmt.Sprintf("集群 %s 中未找到节点 %s", clusterName, action.NodeName), nil
 	}
@@ -302,8 +332,13 @@ func (h *Handler) handleSkill(ctx context.Context, action intent.Action) (string
 		return "", fmt.Errorf("connect to cluster %s: %w", clusterName, err)
 	}
 
-	nodes := make([]skill.SSHTarget, 0, len(clusterCfg.SSHNodes))
-	for _, n := range clusterCfg.SSHNodes {
+	allSSHNodes, err := h.clusterMgr.ResolveSSHNodes(ctx, clusterName, clusterCfg)
+	if err != nil {
+		return "", fmt.Errorf("resolve nodes for %s: %w", clusterName, err)
+	}
+
+	nodes := make([]skill.SSHTarget, 0, len(allSSHNodes))
+	for _, n := range allSSHNodes {
 		nodes = append(nodes, skill.SSHTarget{
 			Name:    n.Name,
 			Host:    n.Host,
@@ -326,7 +361,32 @@ func (h *Handler) handleSkill(ctx context.Context, action intent.Action) (string
 		return "", fmt.Errorf("skill %s execution failed: %w", action.SkillName, err)
 	}
 
+	// list_nodes returns plain text, no LLM analysis needed
+	if action.SkillName == "list_nodes" {
+		return output, nil
+	}
+
 	return h.analyzeOrEcho(ctx, clusterName, s.Description(), output), nil
+}
+
+func (h *Handler) handleRESTStorage(ctx context.Context, action intent.Action) (string, error) {
+	h.mu.Lock()
+	rs, ok := h.restStorages[action.StorageName]
+	h.mu.Unlock()
+	if !ok {
+		return fmt.Sprintf("未找到存储 %s，已配置的 REST 存储: %v", action.StorageName, h.ListRESTStorages()), nil
+	}
+
+	if h.dev.DryRun {
+		return h.dryRunReply(action.StorageName, "rest storage query", "GET "+action.StorageName+" API"), nil
+	}
+
+	result, err := rs.Query(ctx, action.RawMessage)
+	if err != nil {
+		return "", fmt.Errorf("query %s: %w", action.StorageName, err)
+	}
+
+	return h.analyzeOrEcho(ctx, action.StorageName, result.Label, result.Output), nil
 }
 
 // analyzeOrEcho returns AI analysis under normal mode, or raw output under dev mode.

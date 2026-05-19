@@ -139,6 +139,46 @@ func (k *KubeExecutor) CephHealth(ctx context.Context) (string, error) {
 	return strings.Join(results, "\n\n"), nil
 }
 
+// DiscoverNodes returns the internal IP and name of all Ready nodes in the cluster.
+func (k *KubeExecutor) DiscoverNodes(ctx context.Context) ([]NodeInfo, error) {
+	nodes, err := k.clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("list nodes: %w", err)
+	}
+
+	var result []NodeInfo
+	for _, node := range nodes.Items {
+		if !isNodeReady(&node) {
+			continue
+		}
+		ip := ""
+		for _, addr := range node.Status.Addresses {
+			if addr.Type == corev1.NodeInternalIP {
+				ip = addr.Address
+				break
+			}
+		}
+		if ip != "" {
+			result = append(result, NodeInfo{Name: node.Name, InternalIP: ip})
+		}
+	}
+	return result, nil
+}
+
+type NodeInfo struct {
+	Name       string
+	InternalIP string
+}
+
+func isNodeReady(node *corev1.Node) bool {
+	for _, cond := range node.Status.Conditions {
+		if cond.Type == corev1.NodeReady && cond.Status == corev1.ConditionTrue {
+			return true
+		}
+	}
+	return false
+}
+
 func (k *KubeExecutor) execInPod(ctx context.Context, podName string, command []string) (string, error) {
 	req := k.clientset.CoreV1().RESTClient().Post().
 		Resource("pods").

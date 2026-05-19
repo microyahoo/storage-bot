@@ -53,7 +53,7 @@ func (s *SSHExecutor) NodeDiagnostics(ctx context.Context, node config.SSHNode) 
 		cmd   string
 	}{
 		{"dmesg (last 50 lines)", "dmesg | tail -50"},
-		{"disk usage", "df -h"},
+		{"disk usage", "df -hT -x overlay -x tmpfs"},
 		{"memory", "free -h"},
 		{"ceph processes", "ps aux | grep -E 'ceph|rook' | grep -v grep"},
 		{"network errors", "ip -s link | grep -A2 'errors'"},

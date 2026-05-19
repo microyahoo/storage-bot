@@ -63,7 +63,12 @@ clusters:
     # the right SANs instead of skipping verification.
     insecure_skip_tls_verify: false
 
-    ssh_nodes:
+    gateway_node:              # 只配这一个
+        name: "node-1"
+        host: "10.0.1.1:22"
+        user: "root"
+        key_file: "/etc/storage-bot/ssh/id_rsa"
+    ssh_nodes: # ssh_nodes 可以不配，也可以配来覆盖自动发现结果
       - name: "node-1"
         host: "10.0.1.1:22"
         user: "root"
@@ -76,8 +81,17 @@ clusters:
   cluster-02:
     kubeconfig: "/etc/storage-bot/kubeconfigs/cluster-02"
     server_override: "https://10.0.2.10:6443"
-    ssh_nodes:
-      - name: "node-1"
+    gateway_node:
+        name: "node-1"
         host: "10.0.2.1:22"
         user: "root"
         key_file: "/etc/storage-bot/ssh/id_rsa"
+
+rest_storages:
+    storage-nfs-01:
+      base_url: "http://10.0.100.5:8080"
+      api_key: "xxxxx"
+      endpoints:
+        cluster_info: "/api/v1/cluster"
+        dir_usage: "/api/v1/usage?path=%s"   # %s 会被替换成路径
+        health_check: "/api/v1/health"
