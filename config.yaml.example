@@ -67,7 +67,8 @@ clusters:
         name: "node-1"
         host: "10.0.1.1:22"
         user: "root"
-        key_file: "/etc/storage-bot/ssh/id_rsa"
+        key_file: "/root/.ssh/id_rsa"          # bot 本地的密钥，连 gateway 用
+        gateway_key_file: "/root/.ssh/id_rsa"  # gateway 上的密钥路径，连其他节点用
     ssh_nodes: # ssh_nodes 可以不配，也可以配来覆盖自动发现结果
       - name: "node-1"
         host: "10.0.1.1:22"
@@ -85,7 +86,8 @@ clusters:
         name: "node-1"
         host: "10.0.2.1:22"
         user: "root"
-        key_file: "/etc/storage-bot/ssh/id_rsa"
+        key_file: "/root/.ssh/id_rsa"          # bot 本地的密钥，连 gateway 用
+        gateway_key_file: "/root/.ssh/id_rsa"  # gateway 上的密钥路径，连其他节点用
 
 rest_storages:
     storage-nfs-01:

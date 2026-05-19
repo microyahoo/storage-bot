@@ -92,7 +92,7 @@ func (s *IOStat) Execute(sc *Context) (string, error) {
 			User:    node.User,
 			KeyFile: node.KeyFile,
 		}
-		output, err := sc.SSHExec.Run(sc.Ctx, sshNode, "iostat -x 1 3 2>/dev/null || cat /proc/diskstats")
+		output, err := sc.RunOnNode(sshNode, "iostat -x 1 3 2>/dev/null || cat /proc/diskstats")
 		if err != nil {
 			results = append(results, fmt.Sprintf("=== %s ===\nERROR: %v", node.Name, err))
 		} else {

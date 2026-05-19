@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -212,7 +213,15 @@ func (h *Handler) handleLogAnalysis(ctx context.Context, action intent.Action) (
 	}
 
 	for _, node := range targetNodes {
-		logs, err := h.sshExec.CollectLogs(ctx, node)
+		var (
+			logs string
+			err  error
+		)
+		if gw := clusterCfg.GatewayNode; gw != nil && !isGateway(node.Host, gw.Host) {
+			logs, err = h.sshExec.CollectLogsViaGateway(ctx, *gw, node)
+		} else {
+			logs, err = h.sshExec.CollectLogs(ctx, node)
+		}
 		if err != nil {
 			allLogs = append(allLogs, fmt.Sprintf("=== Node %s ERROR ===\n%v", node.Name, err))
 		} else {
@@ -253,9 +262,17 @@ func (h *Handler) handleNodeDiag(ctx context.Context, action intent.Action) (str
 		return h.dryRunReply(clusterName, "node diag on "+node.Name, "ssh: dmesg, df, free, ps, ip, uptime"), nil
 	}
 
-	diagnostics, err := h.sshExec.NodeDiagnostics(ctx, node)
-	if err != nil {
-		return "", fmt.Errorf("node diagnostics for %s: %w", node.Name, err)
+	var (
+		diagnostics string
+		diagErr     error
+	)
+	if gw := clusterCfg.GatewayNode; gw != nil && !isGateway(node.Host, gw.Host) {
+		diagnostics, diagErr = h.sshExec.NodeDiagnosticsViaGateway(ctx, *gw, node)
+	} else {
+		diagnostics, diagErr = h.sshExec.NodeDiagnostics(ctx, node)
+	}
+	if diagErr != nil {
+		return "", fmt.Errorf("node diagnostics for %s: %w", node.Name, diagErr)
 	}
 
 	return h.analyzeOrEcho(ctx, clusterName, fmt.Sprintf("节点 %s 诊断", node.Name), diagnostics), nil
@@ -351,6 +368,7 @@ func (h *Handler) handleSkill(ctx context.Context, action intent.Action) (string
 		Ctx:         ctx,
 		ClusterName: clusterName,
 		NodeName:    action.NodeName,
+		Gateway:     clusterCfg.GatewayNode,
 		KubeExec:    kubeExec,
 		SSHExec:     h.sshExec,
 		Nodes:       nodes,
@@ -404,6 +422,20 @@ func (h *Handler) analyzeOrEcho(ctx context.Context, clusterName, title, diagnos
 
 func (h *Handler) dryRunReply(clusterName, action, willDo string) string {
 	return fmt.Sprintf("**[dry-run] 集群 %s**\n\n动作: %s\n将要执行: %s\n\n(dev.dry_run = true, 未实际执行任何命令)", clusterName, action, willDo)
+}
+
+// hostIP strips the port from a "host:port" string, returning just the IP/hostname.
+// If there is no port, the input is returned as-is.
+func hostIP(hostPort string) string {
+	if h, _, err := net.SplitHostPort(hostPort); err == nil {
+		return h
+	}
+	return hostPort
+}
+
+// isGateway reports whether node is the gateway itself (same IP, ignoring port).
+func isGateway(nodeHost, gwHost string) bool {
+	return hostIP(nodeHost) == hostIP(gwHost)
 }
 
 func (h *Handler) replyMessage(ctx context.Context, messageID, content string) error {

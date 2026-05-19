@@ -28,6 +28,16 @@ func NewProvider(cfg config.LLMConfig) (LLMProvider, error) {
 			baseURL = "https://api.deepseek.com/v1"
 		}
 		return NewOpenAIProvider(cfg.APIKey, baseURL, cfg.Model), nil
+	case "glm", "zhipu", "chatglm":
+		baseURL := cfg.BaseURL
+		if baseURL == "" {
+			baseURL = "https://open.bigmodel.cn/api/paas/v4"
+		}
+		model := cfg.Model
+		if model == "" {
+			model = "glm-4-flash"
+		}
+		return NewOpenAIProvider(cfg.APIKey, baseURL, model), nil
 	case "local", "ollama":
 		baseURL := cfg.BaseURL
 		if baseURL == "" {
@@ -35,6 +45,6 @@ func NewProvider(cfg config.LLMConfig) (LLMProvider, error) {
 		}
 		return NewOpenAIProvider(cfg.APIKey, baseURL, cfg.Model), nil
 	default:
-		return nil, fmt.Errorf("unsupported LLM provider: %q (supported: claude, openai, deepseek, local)", cfg.Provider)
+		return nil, fmt.Errorf("unsupported LLM provider: %q (supported: claude, openai, deepseek, glm, local)", cfg.Provider)
 	}
 }

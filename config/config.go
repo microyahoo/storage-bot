@@ -56,6 +56,10 @@ type SSHNode struct {
 	Host    string `yaml:"host"`
 	User    string `yaml:"user"`
 	KeyFile string `yaml:"key_file"`
+	// GatewayKeyFile is the path of the private key ON the gateway itself,
+	// used for the second hop (gateway → target).
+	// Leave empty to auto-detect (~/.ssh/id_rsa, id_ed25519, id_ecdsa).
+	GatewayKeyFile string `yaml:"gateway_key_file"`
 }
 
 // RESTStorageConfig represents a non-Ceph storage system accessible via REST API.
@@ -137,6 +141,8 @@ func defaultModel(provider string) string {
 		return "gpt-4o"
 	case "deepseek":
 		return "deepseek-chat"
+	case "glm", "zhipu", "chatglm":
+		return "glm-4-flash"
 	case "local", "ollama":
 		return "qwen2.5:14b"
 	default:

@@ -2,7 +2,9 @@ package skill
 
 import (
 	"context"
+	"net"
 
+	"github.com/microyahoo/storage-bot/config"
 	"github.com/microyahoo/storage-bot/executor"
 )
 
@@ -10,9 +12,26 @@ type Context struct {
 	Ctx         context.Context
 	ClusterName string
 	NodeName    string
+	Gateway     *config.SSHNode // nil if bot can reach all nodes directly
 	KubeExec    *executor.KubeExecutor
 	SSHExec     *executor.SSHExecutor
 	Nodes       []SSHTarget
+}
+
+// RunOnNode runs cmd on the given node, using ProxyJump if Gateway is set and
+// node is not the gateway itself (compared by IP, ignoring port).
+func (sc *Context) RunOnNode(node config.SSHNode, cmd string) (string, error) {
+	if sc.Gateway != nil && hostIP(node.Host) != hostIP(sc.Gateway.Host) {
+		return sc.SSHExec.RunViaGateway(sc.Ctx, *sc.Gateway, node, cmd)
+	}
+	return sc.SSHExec.Run(sc.Ctx, node, cmd)
+}
+
+func hostIP(hostPort string) string {
+	if h, _, err := net.SplitHostPort(hostPort); err == nil {
+		return h
+	}
+	return hostPort
 }
 
 type SSHTarget struct {

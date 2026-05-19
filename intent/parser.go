@@ -99,25 +99,37 @@ func ParseWithAll(message string, knownClusters []string, knownSkills []string, 
 		}
 	}
 
-	// Skill aliases (Chinese/English keywords → skill names)
-	skillAliases := map[string][]string{
-		"osd_status":  {"osd", "osd状态"},
-		"pg_status":   {"pg"},
-		"pool_status": {"pool", "存储池"},
-		"capacity":    {"容量", "capacity", "空间"},
-		"slow_ops":    {"slow", "慢请求", "慢操作"},
-		"crash":       {"crash", "崩溃"},
-		"mon_status":  {"mon", "monitor", "仲裁"},
-		"io_stat":     {"io", "iostat", "磁盘io"},
-		"list_nodes":  {"节点列表", "所有节点", "list nodes", "list_nodes"},
+	// Skill aliases (Chinese/English keywords → skill names).
+	// IMPORTANT: longer / more specific aliases must be checked before shorter ones
+	// to prevent "node" in "list_nodes" from triggering NodeDiag first.
+	// The slice order within each entry is checked left-to-right; map iteration is
+	// random, so we use an ordered slice of entries instead.
+	type aliasEntry struct {
+		skill   string
+		aliases []string
 	}
-	for skillName, aliases := range skillAliases {
-		for _, alias := range aliases {
+	skillAliasTable := []aliasEntry{
+		// multi-word / specific aliases first
+		{"list_nodes", []string{"节点列表", "所有节点", "list nodes", "list_nodes", "list node"}},
+		{"osd_status", []string{"osd状态", "osd"}},
+		{"pg_status", []string{"pg"}},
+		{"pool_status", []string{"存储池", "pool"}},
+		{"capacity", []string{"容量", "capacity", "空间"}},
+		{"slow_ops", []string{"慢请求", "慢操作", "slow"}},
+		{"crash", []string{"崩溃", "crash"}},
+		{"mon_status", []string{"仲裁", "monitor", "mon"}},
+		{"io_stat", []string{"磁盘io", "iostat", "io"}},
+	}
+	for _, entry := range skillAliasTable {
+		for _, alias := range entry.aliases {
 			if strings.Contains(lower, alias) {
 				action.Type = ActionSkill
-				action.SkillName = skillName
+				action.SkillName = entry.skill
 				action.ClusterName = extractClusterName(lower, knownClusters)
-				action.NodeName = extractNodeName(lower)
+				// Don't extract node name for list_nodes — there's no target node
+				if entry.skill != "list_nodes" {
+					action.NodeName = extractNodeName(lower)
+				}
 				return action
 			}
 		}
