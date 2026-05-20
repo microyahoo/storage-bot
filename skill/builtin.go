@@ -147,3 +147,67 @@ func runCephCommands(sc *Context, commands []string) (string, error) {
 	}
 	return strings.Join(results, "\n\n"), nil
 }
+
+// --- New skills ---
+
+type GetFSID struct{}
+
+func (s *GetFSID) Name() string        { return "get_fsid" }
+func (s *GetFSID) Description() string  { return "查询 Ceph 集群的 FSID" }
+func (s *GetFSID) Execute(sc *Context) (string, error) {
+	return runCephCommands(sc, []string{"fsid"})
+}
+
+type GetMonIPs struct{}
+
+func (s *GetMonIPs) Name() string        { return "get_mon_ips" }
+func (s *GetMonIPs) Description() string  { return "查询 Ceph 集群的 Monitor IP 列表" }
+func (s *GetMonIPs) Execute(sc *Context) (string, error) {
+	return runCephCommands(sc, []string{"mon dump"})
+}
+
+type SetNoBackfillRebalanceRecover struct{}
+
+func (s *SetNoBackfillRebalanceRecover) Name() string { return "set_no_backfill" }
+func (s *SetNoBackfillRebalanceRecover) Description() string {
+	return "设置 nobackfill + norebalance + norecover flags（暂停数据迁移和恢复）"
+}
+func (s *SetNoBackfillRebalanceRecover) Execute(sc *Context) (string, error) {
+	return runCephCommands(sc, []string{
+		"osd set nobackfill",
+		"osd set norebalance",
+		"osd set norecover",
+		"health",
+	})
+}
+
+type UnsetNoBackfillRebalanceRecover struct{}
+
+func (s *UnsetNoBackfillRebalanceRecover) Name() string { return "unset_no_backfill" }
+func (s *UnsetNoBackfillRebalanceRecover) Description() string {
+	return "取消 nobackfill + norebalance + norecover flags（恢复数据迁移和恢复）"
+}
+func (s *UnsetNoBackfillRebalanceRecover) Execute(sc *Context) (string, error) {
+	return runCephCommands(sc, []string{
+		"osd unset nobackfill",
+		"osd unset norebalance",
+		"osd unset norecover",
+		"health",
+	})
+}
+
+type SetNoout struct{}
+
+func (s *SetNoout) Name() string        { return "set_noout" }
+func (s *SetNoout) Description() string  { return "设置 noout flag（防止 OSD 被标记为 out）" }
+func (s *SetNoout) Execute(sc *Context) (string, error) {
+	return runCephCommands(sc, []string{"osd set noout", "health"})
+}
+
+type UnsetNoout struct{}
+
+func (s *UnsetNoout) Name() string        { return "unset_noout" }
+func (s *UnsetNoout) Description() string  { return "取消 noout flag（恢复自动 OSD out 检测）" }
+func (s *UnsetNoout) Execute(sc *Context) (string, error) {
+	return runCephCommands(sc, []string{"osd unset noout", "health"})
+}

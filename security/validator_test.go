@@ -17,6 +17,16 @@ func TestValidateCephCommand_Allowed(t *testing.T) {
 		{"mon", "stat"},
 		{"quorum_status"},
 		{"crash", "ls"},
+		{"fsid"},
+		{"mon", "dump"},
+		{"osd", "set", "nobackfill"},
+		{"osd", "set", "norebalance"},
+		{"osd", "set", "norecover"},
+		{"osd", "set", "noout"},
+		{"osd", "unset", "nobackfill"},
+		{"osd", "unset", "norebalance"},
+		{"osd", "unset", "norecover"},
+		{"osd", "unset", "noout"},
 	}
 	for _, args := range allowed {
 		if err := ValidateCephCommand(args); err != nil {

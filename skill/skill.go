@@ -62,6 +62,12 @@ func NewRegistry() *Registry {
 	r.Register(&MonStatus{})
 	r.Register(&IOStat{})
 	r.Register(&ListNodes{})
+	r.Register(&GetFSID{})
+	r.Register(&GetMonIPs{})
+	r.Register(&SetNoBackfillRebalanceRecover{})
+	r.Register(&UnsetNoBackfillRebalanceRecover{})
+	r.Register(&SetNoout{})
+	r.Register(&UnsetNoout{})
 	return r
 }
 

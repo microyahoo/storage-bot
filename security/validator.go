@@ -91,21 +91,35 @@ func ValidateCephCommand(args []string) error {
 		"balancer status",
 		"osd perf", "osd pool autoscale-status",
 		"time-sync-status",
+		"fsid",
+		"mon dump",
 	}
 
-	allowed := false
+	// Allowed write operations: only safe, reversible flag changes.
+	allowedWriteExact := []string{
+		"osd set nobackfill",
+		"osd set norebalance",
+		"osd set norecover",
+		"osd set noout",
+		"osd unset nobackfill",
+		"osd unset norebalance",
+		"osd unset norecover",
+		"osd unset noout",
+	}
+
 	for _, prefix := range readOnlyPrefixes {
 		if strings.HasPrefix(lower, prefix) {
-			allowed = true
-			break
+			return nil
 		}
 	}
 
-	if !allowed {
-		return fmt.Errorf("ceph command %q is not in the read-only allow list", full)
+	for _, exact := range allowedWriteExact {
+		if lower == exact {
+			return nil
+		}
 	}
 
-	return nil
+	return fmt.Errorf("ceph command %q is not in the allow list", full)
 }
 
 func SanitizeForLLM(input string) string {

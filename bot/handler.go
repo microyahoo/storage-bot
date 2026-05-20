@@ -331,8 +331,16 @@ func (h *Handler) handleSkill(ctx context.Context, action intent.Action) (string
 		return fmt.Sprintf("未找到 Skill: %s\n\n%s", action.SkillName, h.listSkills()), nil
 	}
 
+	// "all" cluster name: run this skill on every configured cluster (flag ops only)
+	if action.ClusterName == "all" {
+		if !isBroadcastAllowed(action.SkillName) {
+			return fmt.Sprintf("Skill %s 不支持批量对所有集群执行，请指定集群名称", action.SkillName), nil
+		}
+		return h.handleSkillAllClusters(ctx, s)
+	}
+
 	if action.ClusterName == "" {
-		return fmt.Sprintf("请指定集群名称来执行 Skill %s\n\n%s", action.SkillName, h.listClusters()), nil
+		return fmt.Sprintf("请指定集群名称来执行 Skill %s，或输入 all 对所有集群执行\n\n%s", action.SkillName, h.listClusters()), nil
 	}
 
 	clusterName, clusterCfg, err := h.clusterMgr.FindByPrefix(action.ClusterName)
@@ -344,6 +352,42 @@ func (h *Handler) handleSkill(ctx context.Context, action intent.Action) (string
 		return h.dryRunReply(clusterName, "skill: "+s.Name(), s.Description()), nil
 	}
 
+	return h.runSkillOnCluster(ctx, s, clusterName, clusterCfg, action.NodeName)
+}
+
+// isBroadcastAllowed returns true for skills safe to run on all clusters at once.
+// Only flag set/unset ops are allowed — read-only skills on 30 clusters would be too noisy.
+var broadcastSkills = map[string]bool{
+	"set_no_backfill":   true,
+	"unset_no_backfill": true,
+	"set_noout":         true,
+	"unset_noout":       true,
+}
+
+func isBroadcastAllowed(skillName string) bool {
+	return broadcastSkills[skillName]
+}
+
+func (h *Handler) handleSkillAllClusters(ctx context.Context, s skill.Skill) (string, error) {
+	clusters := h.clusterMgr.List()
+	var results []string
+	for _, clusterName := range clusters {
+		clusterCfg, err := h.clusterMgr.Get(clusterName)
+		if err != nil {
+			results = append(results, fmt.Sprintf("**%s**: 获取集群配置失败: %v", clusterName, err))
+			continue
+		}
+		output, err := h.runSkillOnCluster(ctx, s, clusterName, clusterCfg, "")
+		if err != nil {
+			results = append(results, fmt.Sprintf("**%s**: 执行失败: %v", clusterName, err))
+		} else {
+			results = append(results, fmt.Sprintf("**%s**:\n%s", clusterName, output))
+		}
+	}
+	return fmt.Sprintf("批量执行 %s（共 %d 套集群）:\n\n%s", s.Description(), len(clusters), strings.Join(results, "\n\n---\n\n")), nil
+}
+
+func (h *Handler) runSkillOnCluster(ctx context.Context, s skill.Skill, clusterName string, clusterCfg *config.ClusterConfig, nodeName string) (string, error) {
 	kubeExec, err := h.getKubeExecutor(clusterName, clusterCfg)
 	if err != nil {
 		return "", fmt.Errorf("connect to cluster %s: %w", clusterName, err)
@@ -367,7 +411,7 @@ func (h *Handler) handleSkill(ctx context.Context, action intent.Action) (string
 	sc := &skill.Context{
 		Ctx:         ctx,
 		ClusterName: clusterName,
-		NodeName:    action.NodeName,
+		NodeName:    nodeName,
 		Gateway:     clusterCfg.GatewayNode,
 		KubeExec:    kubeExec,
 		SSHExec:     h.sshExec,
@@ -376,15 +420,31 @@ func (h *Handler) handleSkill(ctx context.Context, action intent.Action) (string
 
 	output, err := s.Execute(sc)
 	if err != nil {
-		return "", fmt.Errorf("skill %s execution failed: %w", action.SkillName, err)
+		return "", fmt.Errorf("skill %s on %s failed: %w", s.Name(), clusterName, err)
 	}
 
-	// list_nodes returns plain text, no LLM analysis needed
-	if action.SkillName == "list_nodes" {
+	// list_nodes / get_fsid / get_mon_ips return plain text, no LLM analysis needed
+	if !needsAnalysis(s.Name()) {
 		return output, nil
 	}
 
 	return h.analyzeOrEcho(ctx, clusterName, s.Description(), output), nil
+}
+
+// needsAnalysis returns false for skills whose output is already human-readable
+// and doesn't benefit from LLM summarization.
+var noAnalysisSkills = map[string]bool{
+	"list_nodes":        true,
+	"get_fsid":          true,
+	"get_mon_ips":       true,
+	"set_no_backfill":   true,
+	"unset_no_backfill": true,
+	"set_noout":         true,
+	"unset_noout":       true,
+}
+
+func needsAnalysis(skillName string) bool {
+	return !noAnalysisSkills[skillName]
 }
 
 func (h *Handler) handleRESTStorage(ctx context.Context, action intent.Action) (string, error) {

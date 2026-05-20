@@ -71,6 +71,59 @@ func ParseWithAll(message string, knownClusters []string, knownSkills []string, 
 	action := Action{RawMessage: msg}
 	lower := strings.ToLower(msg)
 
+	// Skill alias table — checked FIRST so multi-word skill commands (e.g. "unset nobackfill all",
+	// "list nodes cdn") are not swallowed by the coarser "list clusters" or NodeDiag checks below.
+	// Rules:
+	//   • unset variants must appear before set variants (substring containment: "unset nobackfill" ⊃ "set nobackfill")
+	//   • multi-word / longer aliases before shorter ones within each entry
+	type aliasEntry struct {
+		skill   string
+		aliases []string
+	}
+	skillAliasTable := []aliasEntry{
+		// unset before set (avoids "unset nobackfill" matching "set nobackfill")
+		{"unset_no_backfill", []string{"unset nobackfill", "unset_no_backfill", "取消nobackfill", "恢复迁移", "恢复backfill"}},
+		{"unset_noout", []string{"unset noout", "unset_noout", "取消noout"}},
+		{"set_no_backfill", []string{"set nobackfill", "set_no_backfill", "设置nobackfill", "暂停迁移", "暂停恢复"}},
+		{"set_noout", []string{"set noout", "set_noout", "设置noout"}},
+		// multi-word node/list aliases before bare "node"
+		{"list_nodes", []string{"节点列表", "所有节点", "list nodes", "list_nodes", "list_node", "list node"}},
+		{"get_mon_ips", []string{"mon ip", "mon ips", "monitor ip", "mon地址", "monitor地址"}},
+		{"get_fsid", []string{"fsid", "集群id", "cluster id"}},
+		{"osd_status", []string{"osd状态", "osd"}},
+		{"pg_status", []string{"pg"}},
+		{"pool_status", []string{"存储池", "pool"}},
+		{"capacity", []string{"容量", "capacity", "空间"}},
+		{"slow_ops", []string{"慢请求", "慢操作", "slow"}},
+		{"crash", []string{"崩溃", "crash"}},
+		{"mon_status", []string{"仲裁", "monitor", "mon"}},
+		{"io_stat", []string{"磁盘io", "iostat", "io"}},
+	}
+	for _, entry := range skillAliasTable {
+		for _, alias := range entry.aliases {
+			if strings.Contains(lower, alias) {
+				action.Type = ActionSkill
+				action.SkillName = entry.skill
+				action.ClusterName = extractClusterNameOrAll(lower, knownClusters)
+				if entry.skill != "list_nodes" {
+					action.NodeName = extractNodeName(lower)
+				}
+				return action
+			}
+		}
+	}
+
+	// Check skill names passed in from registry (exact name match)
+	for _, sk := range knownSkills {
+		if strings.Contains(lower, strings.ToLower(sk)) {
+			action.Type = ActionSkill
+			action.SkillName = sk
+			action.ClusterName = extractClusterNameOrAll(lower, knownClusters)
+			action.NodeName = extractNodeName(lower)
+			return action
+		}
+	}
+
 	if strings.Contains(lower, "help") || strings.Contains(lower, "帮助") || strings.Contains(lower, "使用") || msg == "?" {
 		action.Type = ActionHelp
 		return action
@@ -86,53 +139,6 @@ func ParseWithAll(message string, knownClusters []string, knownSkills []string, 
 		(strings.Contains(lower, "skill") || strings.Contains(lower, "技能") || strings.Contains(lower, "能力")) {
 		action.Type = ActionListSkills
 		return action
-	}
-
-	// Check for skill invocation
-	for _, sk := range knownSkills {
-		if strings.Contains(lower, strings.ToLower(sk)) {
-			action.Type = ActionSkill
-			action.SkillName = sk
-			action.ClusterName = extractClusterName(lower, knownClusters)
-			action.NodeName = extractNodeName(lower)
-			return action
-		}
-	}
-
-	// Skill aliases (Chinese/English keywords → skill names).
-	// IMPORTANT: longer / more specific aliases must be checked before shorter ones
-	// to prevent "node" in "list_nodes" from triggering NodeDiag first.
-	// The slice order within each entry is checked left-to-right; map iteration is
-	// random, so we use an ordered slice of entries instead.
-	type aliasEntry struct {
-		skill   string
-		aliases []string
-	}
-	skillAliasTable := []aliasEntry{
-		// multi-word / specific aliases first
-		{"list_nodes", []string{"节点列表", "所有节点", "list nodes", "list_nodes", "list node"}},
-		{"osd_status", []string{"osd状态", "osd"}},
-		{"pg_status", []string{"pg"}},
-		{"pool_status", []string{"存储池", "pool"}},
-		{"capacity", []string{"容量", "capacity", "空间"}},
-		{"slow_ops", []string{"慢请求", "慢操作", "slow"}},
-		{"crash", []string{"崩溃", "crash"}},
-		{"mon_status", []string{"仲裁", "monitor", "mon"}},
-		{"io_stat", []string{"磁盘io", "iostat", "io"}},
-	}
-	for _, entry := range skillAliasTable {
-		for _, alias := range entry.aliases {
-			if strings.Contains(lower, alias) {
-				action.Type = ActionSkill
-				action.SkillName = entry.skill
-				action.ClusterName = extractClusterName(lower, knownClusters)
-				// Don't extract node name for list_nodes — there's no target node
-				if entry.skill != "list_nodes" {
-					action.NodeName = extractNodeName(lower)
-				}
-				return action
-			}
-		}
 	}
 
 	// Check for REST storage invocation (matched by name)
@@ -250,6 +256,17 @@ func extractClusterName(lower string, knownClusters []string) string {
 	}
 
 	return ""
+}
+
+// extractClusterNameOrAll is like extractClusterName but also recognises
+// "all" / "所有" / "全部" and returns the sentinel value "all".
+func extractClusterNameOrAll(lower string, knownClusters []string) string {
+	for _, kw := range []string{"all", "所有", "全部"} {
+		if strings.Contains(lower, kw) {
+			return "all"
+		}
+	}
+	return extractClusterName(lower, knownClusters)
 }
 
 func extractNodeName(lower string) string {
