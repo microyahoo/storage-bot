@@ -112,7 +112,7 @@ func (h *Handler) HandleMessage(ctx context.Context, event *larkim.P2MessageRece
 		slog.Info("[dev] LLM fallback disabled, using regex result as-is", "raw", sanitized)
 	}
 
-	slog.Info("parsed intent", "type", action.Type, "cluster", action.ClusterName, "node", action.NodeName)
+	slog.Info("parsed intent", "type", action.Type, "skill", action.SkillName, "cluster", action.ClusterName, "node", action.NodeName)
 
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
@@ -469,13 +469,22 @@ func (h *Handler) handleRESTStorage(ctx context.Context, action intent.Action) (
 
 // analyzeOrEcho returns AI analysis under normal mode, or raw output under dev mode.
 func (h *Handler) analyzeOrEcho(ctx context.Context, clusterName, title, diagnostics string) string {
+	output := diagnostics
+	if len(output) > 200 {
+		output = output[:200]
+	}
+	slog.Info("AI analysis with raw output", "cluster", clusterName, "title", title, "diagnostics", output)
 	if h.dev.DisableLLM || h.analyzer == nil {
 		return fmt.Sprintf("**集群 %s — %s [dev mode, LLM disabled]**\n\n```\n%s\n```", clusterName, title, diagnostics)
 	}
 
+	ctx, cancelFunc := context.WithTimeout(ctx, time.Minute)
+	defer cancelFunc()
+
 	analysis, err := h.analyzer.Analyze(ctx, clusterName, diagnostics)
 	if err != nil {
-		return fmt.Sprintf("**集群 %s — %s**\n\n```\n%s\n```\n\nAI 分析失败: %v", clusterName, title, diagnostics, err)
+		slog.Warn("AI analysis failed, returning raw output", "cluster", clusterName, "title", title, "error", err)
+		return fmt.Sprintf("**集群 %s — %s**\n\n```\n%s\n```", clusterName, title, diagnostics)
 	}
 	return fmt.Sprintf("**集群 %s — %s 报告**\n\n%s", clusterName, title, analysis)
 }

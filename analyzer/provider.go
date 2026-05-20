@@ -28,13 +28,13 @@ func NewProvider(cfg config.LLMConfig) (LLMProvider, error) {
 			baseURL = "https://api.deepseek.com/v1"
 		}
 		return NewOpenAIProvider(cfg.APIKey, baseURL, cfg.Model), nil
-	case "local", "ollama":
+	case "qwen", "dashscope", "aliyun":
 		baseURL := cfg.BaseURL
 		if baseURL == "" {
-			baseURL = "http://localhost:11434/v1"
+			baseURL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 		}
 		return NewOpenAIProvider(cfg.APIKey, baseURL, cfg.Model), nil
 	default:
-		return nil, fmt.Errorf("unsupported LLM provider: %q (supported: claude, openai, deepseek, glm, local)", cfg.Provider)
+		return nil, fmt.Errorf("unsupported LLM provider: %q (supported: claude, openai, deepseek, qwen)", cfg.Provider)
 	}
 }

@@ -8,11 +8,11 @@ import (
 )
 
 type Config struct {
-	Feishu        FeishuConfig              `yaml:"feishu"`
-	LLM           LLMConfig                 `yaml:"llm"`
-	Dev           DevConfig                 `yaml:"dev"`
-	Clusters      map[string]*ClusterConfig `yaml:"clusters"`
-	RESTStorages  map[string]*RESTStorageConfig `yaml:"rest_storages"`
+	Feishu       FeishuConfig                  `yaml:"feishu"`
+	LLM          LLMConfig                     `yaml:"llm"`
+	Dev          DevConfig                     `yaml:"dev"`
+	Clusters     map[string]*ClusterConfig     `yaml:"clusters"`
+	RESTStorages map[string]*RESTStorageConfig `yaml:"rest_storages"`
 }
 
 type DevConfig struct {
@@ -126,7 +126,7 @@ func Load(path string) (*Config, error) {
 	if cfg.Feishu.AppID == "" || cfg.Feishu.AppSecret == "" {
 		return nil, fmt.Errorf("feishu app_id and app_secret are required")
 	}
-	if cfg.LLM.APIKey == "" && cfg.LLM.Provider != "local" && cfg.LLM.Provider != "ollama" && !cfg.Dev.DisableLLM {
+	if cfg.LLM.APIKey == "" && cfg.LLM.Provider != "ollama" && !cfg.Dev.DisableLLM {
 		return nil, fmt.Errorf("llm api_key is required (config or LLM_API_KEY env), or set dev.disable_llm: true")
 	}
 
@@ -141,10 +141,8 @@ func defaultModel(provider string) string {
 		return "gpt-4o"
 	case "deepseek":
 		return "deepseek-chat"
-	case "glm", "zhipu", "chatglm":
-		return "glm-4-flash"
-	case "local", "ollama":
-		return "qwen2.5:14b"
+	case "qwen", "dashscope", "aliyun":
+		return "qwen-plus"
 	default:
 		return ""
 	}
