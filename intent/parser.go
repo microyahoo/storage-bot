@@ -56,7 +56,6 @@ type Action struct {
 }
 
 var clusterNameRe = regexp.MustCompile(`(?i)cluster[- _]?(\S+)`)
-var nodeNameRe = regexp.MustCompile(`(?i)node[- _]?(\S+)`)
 
 func Parse(message string, knownClusters []string) Action {
 	return ParseWithSkills(message, knownClusters, nil)
@@ -106,7 +105,7 @@ func ParseWithAll(message string, knownClusters []string, knownSkills []string, 
 				action.SkillName = entry.skill
 				action.ClusterName = extractClusterNameOrAll(lower, knownClusters)
 				if entry.skill != "list_nodes" {
-					action.NodeName = extractNodeName(lower)
+					action.NodeName = extractNodeName(lower, knownClusters)
 				}
 				return action
 			}
@@ -119,7 +118,7 @@ func ParseWithAll(message string, knownClusters []string, knownSkills []string, 
 			action.Type = ActionSkill
 			action.SkillName = sk
 			action.ClusterName = extractClusterNameOrAll(lower, knownClusters)
-			action.NodeName = extractNodeName(lower)
+			action.NodeName = extractNodeName(lower, knownClusters)
 			return action
 		}
 	}
@@ -152,7 +151,7 @@ func ParseWithAll(message string, knownClusters []string, knownSkills []string, 
 	}
 
 	action.ClusterName = extractClusterName(lower, knownClusters)
-	action.NodeName = extractNodeName(lower)
+	action.NodeName = extractNodeName(lower, knownClusters)
 
 	switch {
 	case strings.Contains(lower, "log") || strings.Contains(lower, "日志"):
@@ -269,9 +268,23 @@ func extractClusterNameOrAll(lower string, knownClusters []string) string {
 	return extractClusterName(lower, knownClusters)
 }
 
-func extractNodeName(lower string) string {
-	if m := nodeNameRe.FindStringSubmatch(lower); len(m) > 1 {
-		return m[1]
+// extractNodeName picks out a candidate node token from the message.
+// It splits on whitespace and returns the first token that is not a known
+// cluster name and contains a hyphen or underscore (typical hostname shape).
+// The caller (skill execution) does the authoritative match against the real
+// node list and reports available nodes if the token matches nothing.
+func extractNodeName(lower string, knownClusters []string) string {
+	excluded := make(map[string]bool, len(knownClusters))
+	for _, c := range knownClusters {
+		excluded[strings.ToLower(c)] = true
+	}
+	for _, tok := range strings.Fields(lower) {
+		if excluded[tok] {
+			continue
+		}
+		if strings.Contains(tok, "-") || strings.Contains(tok, "_") {
+			return tok
+		}
 	}
 	return ""
 }

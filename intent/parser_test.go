@@ -1,6 +1,9 @@
 package intent
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseSkillWithAll(t *testing.T) {
 	clusters := []string{"cluster-01", "cluster-02"}
@@ -64,6 +67,30 @@ func TestParseListNodeNotNodeDiag(t *testing.T) {
 			}
 			if action.ClusterName != c.wantCluster {
 				t.Errorf("msg=%q: cluster=%q, want %q", c.msg, action.ClusterName, c.wantCluster)
+			}
+		})
+	}
+}
+
+func TestExtractNodeName(t *testing.T) {
+	clusters := []string{"cdn", "cluster-01"}
+
+	cases := []struct {
+		msg      string
+		wantNode string
+	}{
+		{"iostat cdn bd-cdn-node02", "bd-cdn-node02"},
+		{"iostat cdn node bd-cdn-node02", "bd-cdn-node02"},
+		{"iostat cluster-01 storage-node01", "storage-node01"},
+		{"iostat cdn", ""},
+		{"node bd-cdn-node02", "bd-cdn-node02"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.msg, func(t *testing.T) {
+			got := extractNodeName(strings.ToLower(c.msg), clusters)
+			if got != c.wantNode {
+				t.Errorf("msg=%q: got node=%q, want %q", c.msg, got, c.wantNode)
 			}
 		})
 	}

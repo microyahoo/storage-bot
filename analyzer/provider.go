@@ -28,16 +28,6 @@ func NewProvider(cfg config.LLMConfig) (LLMProvider, error) {
 			baseURL = "https://api.deepseek.com/v1"
 		}
 		return NewOpenAIProvider(cfg.APIKey, baseURL, cfg.Model), nil
-	case "glm", "zhipu", "chatglm":
-		baseURL := cfg.BaseURL
-		if baseURL == "" {
-			baseURL = "https://open.bigmodel.cn/api/paas/v4"
-		}
-		model := cfg.Model
-		if model == "" {
-			model = "glm-4-flash"
-		}
-		return NewOpenAIProvider(cfg.APIKey, baseURL, model), nil
 	case "local", "ollama":
 		baseURL := cfg.BaseURL
 		if baseURL == "" {
