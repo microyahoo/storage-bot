@@ -95,3 +95,42 @@ func TestExtractNodeName(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractClusterTarget(t *testing.T) {
+	clusters := []string{"cdn-01", "cdn-02", "cdn-test", "hdd-01", "hdd-02"}
+
+	cases := []struct {
+		msg          string
+		wantCluster  string
+		wantExcludes []string
+	}{
+		{"set nobackfill all", "all", nil},
+		{"set nobackfill 所有", "all", nil},
+		{"set nobackfill all except cdn-test", "all", []string{"cdn-test"}},
+		{"set nobackfill 所有 排除 cdn-test cdn-01", "all", []string{"cdn-test", "cdn-01"}},
+		{"set nobackfill cdn", "cdn*", nil},
+		{"set nobackfill hdd-01", "hdd-01", nil},
+	}
+
+	for _, c := range cases {
+		t.Run(c.msg, func(t *testing.T) {
+			gotCluster, gotExcludes := extractClusterTarget(strings.ToLower(c.msg), clusters)
+			if gotCluster != c.wantCluster {
+				t.Errorf("msg=%q: cluster=%q, want %q", c.msg, gotCluster, c.wantCluster)
+			}
+			if len(gotExcludes) != len(c.wantExcludes) {
+				t.Errorf("msg=%q: excludes=%v, want %v", c.msg, gotExcludes, c.wantExcludes)
+				return
+			}
+			excl := make(map[string]bool)
+			for _, e := range gotExcludes {
+				excl[e] = true
+			}
+			for _, e := range c.wantExcludes {
+				if !excl[e] {
+					t.Errorf("msg=%q: missing exclude %q in %v", c.msg, e, gotExcludes)
+				}
+			}
+		})
+	}
+}

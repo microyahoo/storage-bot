@@ -290,13 +290,24 @@ func (h *Handler) helpMessage() string {
 **Skill**: osd cluster-01 / 看看01的pg状态 / cluster-02容量
 **Skill列表**: list skills / 有哪些技能
 
+**Skill 批量执行**（仅 set/unset nobackfill、set/unset noout 支持）：
+  单套集群:   set nobackfill cdn
+  前缀匹配:   set nobackfill cdn        （匹配所有含 "cdn" 的集群）
+  全量执行:   set nobackfill all / set nobackfill 所有
+  全量排除:   set nobackfill all except cdn-test cdn-staging
+              set nobackfill 所有 排除 cdn-test
+
+**磁盘 IO**：
+  所有节点:   iostat cdn
+  指定节点:   iostat cdn bd-cdn-node02
+              （节点名不存在时会列出可用节点）
+
 示例：
   @bot 帮我看看cluster-01的状态
-  @bot 01集群有什么问题
   @bot 分析一下cluster-02的日志
-  @bot cluster-05 node-3 磁盘状态
-  @bot cluster-01 osd状态
-  @bot 看看cluster-02的容量`
+  @bot iostat cdn bd-cdn-node02
+  @bot set nobackfill cdn
+  @bot set nobackfill all except cdn-test`
 }
 
 func (h *Handler) listClusters() string {
@@ -331,28 +342,57 @@ func (h *Handler) handleSkill(ctx context.Context, action intent.Action) (string
 		return fmt.Sprintf("未找到 Skill: %s\n\n%s", action.SkillName, h.listSkills()), nil
 	}
 
-	// "all" cluster name: run this skill on every configured cluster (flag ops only)
-	if action.ClusterName == "all" {
+	// Resolve target cluster list.
+	var targetClusters []string
+	switch {
+	case action.ClusterName == "all":
 		if !isBroadcastAllowed(action.SkillName) {
-			return fmt.Sprintf("Skill %s 不支持批量对所有集群执行，请指定集群名称", action.SkillName), nil
+			return fmt.Sprintf("Skill %s 不支持批量执行，请指定集群名称", action.SkillName), nil
 		}
-		return h.handleSkillAllClusters(ctx, s)
-	}
-
-	if action.ClusterName == "" {
+		targetClusters = h.clusterMgr.List()
+	case strings.HasSuffix(action.ClusterName, "*"):
+		if !isBroadcastAllowed(action.SkillName) {
+			return fmt.Sprintf("Skill %s 不支持批量执行，请指定集群名称", action.SkillName), nil
+		}
+		prefix := strings.TrimSuffix(action.ClusterName, "*")
+		targetClusters = h.clusterMgr.ListByPrefix(prefix)
+		if len(targetClusters) == 0 {
+			return fmt.Sprintf("没有匹配前缀 %q 的集群\n\n%s", prefix, h.listClusters()), nil
+		}
+	case action.ClusterName == "":
 		return fmt.Sprintf("请指定集群名称来执行 Skill %s，或输入 all 对所有集群执行\n\n%s", action.SkillName, h.listClusters()), nil
+	default:
+		// Single cluster.
+		clusterName, clusterCfg, err := h.clusterMgr.FindByPrefix(action.ClusterName)
+		if err != nil {
+			return "", err
+		}
+		if h.dev.DryRun {
+			return h.dryRunReply(clusterName, "skill: "+s.Name(), s.Description()), nil
+		}
+		return h.runSkillOnCluster(ctx, s, clusterName, clusterCfg, action.NodeName)
 	}
 
-	clusterName, clusterCfg, err := h.clusterMgr.FindByPrefix(action.ClusterName)
-	if err != nil {
-		return "", err
+	// Apply exclusions.
+	if len(action.ExcludeClusters) > 0 {
+		excluded := make(map[string]bool, len(action.ExcludeClusters))
+		for _, e := range action.ExcludeClusters {
+			excluded[e] = true
+		}
+		filtered := targetClusters[:0]
+		for _, c := range targetClusters {
+			if !excluded[c] {
+				filtered = append(filtered, c)
+			}
+		}
+		targetClusters = filtered
 	}
 
-	if h.dev.DryRun {
-		return h.dryRunReply(clusterName, "skill: "+s.Name(), s.Description()), nil
+	if len(targetClusters) == 0 {
+		return "排除后没有剩余目标集群", nil
 	}
 
-	return h.runSkillOnCluster(ctx, s, clusterName, clusterCfg, action.NodeName)
+	return h.handleSkillOnClusters(ctx, s, targetClusters, action.ExcludeClusters)
 }
 
 // isBroadcastAllowed returns true for skills safe to run on all clusters at once.
@@ -368,13 +408,16 @@ func isBroadcastAllowed(skillName string) bool {
 	return broadcastSkills[skillName]
 }
 
-func (h *Handler) handleSkillAllClusters(ctx context.Context, s skill.Skill) (string, error) {
-	clusters := h.clusterMgr.List()
+func (h *Handler) handleSkillOnClusters(ctx context.Context, s skill.Skill, clusters []string, excludes []string) (string, error) {
 	var results []string
 	for _, clusterName := range clusters {
 		clusterCfg, err := h.clusterMgr.Get(clusterName)
 		if err != nil {
 			results = append(results, fmt.Sprintf("**%s**: 获取集群配置失败: %v", clusterName, err))
+			continue
+		}
+		if h.dev.DryRun {
+			results = append(results, h.dryRunReply(clusterName, "skill: "+s.Name(), s.Description()))
 			continue
 		}
 		output, err := h.runSkillOnCluster(ctx, s, clusterName, clusterCfg, "")
@@ -384,7 +427,12 @@ func (h *Handler) handleSkillAllClusters(ctx context.Context, s skill.Skill) (st
 			results = append(results, fmt.Sprintf("**%s**:\n%s", clusterName, output))
 		}
 	}
-	return fmt.Sprintf("批量执行 %s（共 %d 套集群）:\n\n%s", s.Description(), len(clusters), strings.Join(results, "\n\n---\n\n")), nil
+	excludeNote := ""
+	if len(excludes) > 0 {
+		excludeNote = fmt.Sprintf("（已排除: %s）", strings.Join(excludes, ", "))
+	}
+	return fmt.Sprintf("批量执行 %s（共 %d 套集群%s）:\n\n%s",
+		s.Description(), len(clusters), excludeNote, strings.Join(results, "\n\n---\n\n")), nil
 }
 
 func (h *Handler) runSkillOnCluster(ctx context.Context, s skill.Skill, clusterName string, clusterCfg *config.ClusterConfig, nodeName string) (string, error) {

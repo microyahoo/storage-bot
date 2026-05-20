@@ -47,12 +47,13 @@ func (t ActionType) String() string {
 }
 
 type Action struct {
-	Type        ActionType
-	ClusterName string
-	NodeName    string
-	SkillName   string
-	StorageName string // for ActionRESTStorage
-	RawMessage  string
+	Type            ActionType
+	ClusterName     string
+	ExcludeClusters []string // for "all except X Y Z" or prefix broadcast
+	NodeName        string
+	SkillName       string
+	StorageName     string // for ActionRESTStorage
+	RawMessage      string
 }
 
 var clusterNameRe = regexp.MustCompile(`(?i)cluster[- _]?(\S+)`)
@@ -103,7 +104,7 @@ func ParseWithAll(message string, knownClusters []string, knownSkills []string, 
 			if strings.Contains(lower, alias) {
 				action.Type = ActionSkill
 				action.SkillName = entry.skill
-				action.ClusterName = extractClusterNameOrAll(lower, knownClusters)
+				action.ClusterName, action.ExcludeClusters = extractClusterTarget(lower, knownClusters)
 				if entry.skill != "list_nodes" {
 					action.NodeName = extractNodeName(lower, knownClusters)
 				}
@@ -117,7 +118,7 @@ func ParseWithAll(message string, knownClusters []string, knownSkills []string, 
 		if strings.Contains(lower, strings.ToLower(sk)) {
 			action.Type = ActionSkill
 			action.SkillName = sk
-			action.ClusterName = extractClusterNameOrAll(lower, knownClusters)
+			action.ClusterName, action.ExcludeClusters = extractClusterTarget(lower, knownClusters)
 			action.NodeName = extractNodeName(lower, knownClusters)
 			return action
 		}
@@ -257,15 +258,59 @@ func extractClusterName(lower string, knownClusters []string) string {
 	return ""
 }
 
-// extractClusterNameOrAll is like extractClusterName but also recognises
-// "all" / "所有" / "全部" and returns the sentinel value "all".
-func extractClusterNameOrAll(lower string, knownClusters []string) string {
+// extractClusterTarget parses the cluster targeting from a broadcast skill message.
+// It recognises:
+//   - "all" / "所有" / "全部"           → ("all", nil)
+//   - "all except A B" / "所有 排除 A B" → ("all", ["A","B"])
+//   - a known cluster prefix like "cdn"  → ("cdn*", nil)  [sentinel meaning prefix match]
+//   - a single known cluster name        → (name, nil)
+func extractClusterTarget(lower string, knownClusters []string) (clusterName string, excludes []string) {
+	isAll := false
 	for _, kw := range []string{"all", "所有", "全部"} {
 		if strings.Contains(lower, kw) {
-			return "all"
+			isAll = true
+			break
 		}
 	}
-	return extractClusterName(lower, knownClusters)
+
+	// Parse "except / 排除 / 除了" followed by space-separated cluster tokens.
+	for _, sep := range []string{"except", "排除", "除了"} {
+		if idx := strings.Index(lower, sep); idx >= 0 {
+			rest := strings.TrimSpace(lower[idx+len(sep):])
+			for _, tok := range strings.Fields(rest) {
+				// Match token against known cluster names (prefix match).
+				for _, name := range knownClusters {
+					if strings.Contains(strings.ToLower(name), tok) {
+						excludes = append(excludes, name)
+					}
+				}
+			}
+			break
+		}
+	}
+
+	if isAll {
+		return "all", excludes
+	}
+
+	// Check for prefix broadcast: a token that matches multiple clusters.
+	// e.g. "set nobackfill cdn" where cdn matches cdn-01, cdn-02, ...
+	for _, tok := range strings.Fields(lower) {
+		var matched []string
+		for _, name := range knownClusters {
+			if strings.Contains(strings.ToLower(name), tok) {
+				matched = append(matched, name)
+			}
+		}
+		if len(matched) > 1 {
+			return tok + "*", nil // sentinel: prefix broadcast
+		}
+		if len(matched) == 1 {
+			return matched[0], nil
+		}
+	}
+
+	return extractClusterName(lower, knownClusters), nil
 }
 
 // extractNodeName picks out a candidate node token from the message.

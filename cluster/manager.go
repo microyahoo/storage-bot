@@ -63,6 +63,21 @@ func (m *Manager) List() []string {
 	return names
 }
 
+// ListByPrefix returns all cluster names that contain prefix (case-insensitive).
+func (m *Manager) ListByPrefix(prefix string) []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	lower := strings.ToLower(prefix)
+	var names []string
+	for name := range m.clusters {
+		if strings.Contains(strings.ToLower(name), lower) {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
 func (m *Manager) FindByPrefix(input string) (string, *config.ClusterConfig, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
