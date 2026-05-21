@@ -82,9 +82,9 @@ func ParseWithAll(message string, knownClusters []string, knownSkills []string, 
 	}
 	skillAliasTable := []aliasEntry{
 		// unset before set (avoids "unset nobackfill" matching "set nobackfill")
-		{"unset_no_backfill", []string{"unset nobackfill", "unset_no_backfill", "取消nobackfill", "恢复迁移", "恢复backfill"}},
+		{"unset_no_backfill", []string{"unset nobackfill", "unset no_backfill", "unset_no_backfill", "取消nobackfill", "恢复迁移", "恢复backfill"}},
 		{"unset_noout", []string{"unset noout", "unset_noout", "取消noout"}},
-		{"set_no_backfill", []string{"set nobackfill", "set_no_backfill", "设置nobackfill", "暂停迁移", "暂停恢复"}},
+		{"set_no_backfill", []string{"set nobackfill", "set no_backfill", "set_no_backfill", "设置nobackfill", "暂停迁移", "暂停恢复"}},
 		{"set_noout", []string{"set noout", "set_noout", "设置noout"}},
 		// multi-word node/list aliases before bare "node"
 		{"list_nodes", []string{"节点列表", "所有节点", "list nodes", "list_nodes", "list_node", "list node"}},
