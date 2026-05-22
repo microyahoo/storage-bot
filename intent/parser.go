@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/microyahoo/storage-bot/analyzer"
@@ -52,7 +53,8 @@ type Action struct {
 	ExcludeClusters []string // for "all except X Y Z" or prefix broadcast
 	NodeName        string
 	SkillName       string
-	StorageName     string // for ActionRESTStorage
+	StorageName     string            // for ActionRESTStorage
+	Args            map[string]string // optional skill parameters
 	RawMessage      string
 }
 
@@ -98,15 +100,19 @@ func ParseWithAll(message string, knownClusters []string, knownSkills []string, 
 		{"crash", []string{"崩溃", "crash"}},
 		{"mon_status", []string{"仲裁", "monitor", "mon"}},
 		{"io_stat", []string{"磁盘io", "iostat", "io"}},
+		{"optimize_rgw_pg", []string{"optimize rgw", "rgw pg", "rgw pg优化", "upmap rgw", "优化rgw pg", "优化rgw存储池"}},
 	}
 	for _, entry := range skillAliasTable {
 		for _, alias := range entry.aliases {
-			if strings.Contains(lower, alias) {
+			if lower == entry.skill || strings.Contains(lower, alias) {
 				action.Type = ActionSkill
 				action.SkillName = entry.skill
 				action.ClusterName, action.ExcludeClusters = extractClusterTarget(lower, knownClusters)
 				if entry.skill != "list_nodes" {
 					action.NodeName = extractNodeName(lower, knownClusters)
+				}
+				if entry.skill == "optimize_rgw_pg" {
+					action.Args = extractSkillArgs(lower, []string{"max"})
 				}
 				return action
 			}
@@ -346,6 +352,28 @@ func isNumeric(s string) bool {
 		}
 	}
 	return true
+}
+
+// extractSkillArgs parses named numeric parameters from the message.
+// Supports "param=N" and "param N" patterns for the given param names.
+func extractSkillArgs(lower string, params []string) map[string]string {
+	args := make(map[string]string)
+	for _, param := range params {
+		reEq := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(param) + `\s*=\s*(\d+)\b`)
+		if m := reEq.FindStringSubmatch(lower); len(m) > 1 {
+			if _, err := strconv.Atoi(m[1]); err == nil {
+				args[param] = m[1]
+				continue
+			}
+		}
+		reSpace := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(param) + `\s+(\d+)\b`)
+		if m := reSpace.FindStringSubmatch(lower); len(m) > 1 {
+			if _, err := strconv.Atoi(m[1]); err == nil {
+				args[param] = m[1]
+			}
+		}
+	}
+	return args
 }
 
 func cleanJSONResponse(s string) string {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/microyahoo/storage-bot/security"
@@ -102,6 +103,42 @@ func (k *KubeExecutor) findToolboxPod(ctx context.Context) (string, error) {
 	}
 
 	return "", fmt.Errorf("no running toolbox or operator pod found in namespace %s", k.namespace)
+}
+
+// RunShellScript runs an arbitrary shell script inside the toolbox pod.
+// stderr is merged into stdout (2>&1) to avoid SPDY stream deadlock where
+// the executor waits for both streams to close independently.
+func (k *KubeExecutor) RunShellScript(ctx context.Context, script string) (string, error) {
+	podName, err := k.findToolboxPod(ctx)
+	if err != nil {
+		return "", err
+	}
+	slog.Info("run shell script", "pod", podName, "script", script)
+
+	// Wrap in a subshell that merges stderr into stdout. This ensures only one
+	// output stream is open, preventing SPDY from hanging after the process exits.
+	merged := "{ " + script + "; } 2>&1"
+	req := k.clientset.CoreV1().RESTClient().Post().
+		Resource("pods").
+		Name(podName).
+		Namespace(k.namespace).
+		SubResource("exec").
+		VersionedParams(&corev1.PodExecOptions{
+			Command: []string{"bash", "-c", merged},
+			Stdout:  true,
+			Stderr:  false,
+		}, scheme.ParameterCodec)
+
+	exec, err := remotecommand.NewSPDYExecutor(k.restConfig, "POST", req.URL())
+	if err != nil {
+		return "", fmt.Errorf("create executor: %w", err)
+	}
+
+	var buf bytes.Buffer
+	if err := exec.StreamWithContext(ctx, remotecommand.StreamOptions{Stdout: &buf}); err != nil {
+		return "", fmt.Errorf("exec failed: %w\noutput: %s", err, buf.String())
+	}
+	return buf.String(), nil
 }
 
 func (k *KubeExecutor) RunCephCommand(ctx context.Context, args ...string) (string, error) {

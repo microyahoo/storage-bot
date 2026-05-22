@@ -16,6 +16,7 @@ type Context struct {
 	KubeExec    *executor.KubeExecutor
 	SSHExec     *executor.SSHExecutor
 	Nodes       []SSHTarget
+	Args        map[string]string // optional skill parameters (e.g. "max" for upmap)
 }
 
 // RunOnNode runs cmd on the given node, using ProxyJump if Gateway is set and
@@ -68,6 +69,7 @@ func NewRegistry() *Registry {
 	r.Register(&UnsetNoBackfillRebalanceRecover{})
 	r.Register(&SetNoout{})
 	r.Register(&UnsetNoout{})
+	r.Register(&OptimizeRGWBucketsPG{})
 	return r
 }
 

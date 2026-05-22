@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -302,12 +303,18 @@ func (h *Handler) helpMessage() string {
   指定节点:   iostat cdn bd-cdn-node02
               （节点名不存在时会列出可用节点）
 
+**RGW PG 优化**（优化 rgw.buckets.data 存储池 PG 分布）：
+  optimize rgw cluster-01
+  optimize rgw cluster-01 max=100    （指定最大调整条目数，默认 100）
+  优化rgw pg cluster-01
+
 示例：
   @bot 帮我看看cluster-01的状态
   @bot 分析一下cluster-02的日志
   @bot iostat cdn bd-cdn-node02
   @bot set nobackfill cdn
-  @bot set nobackfill all except cdn-test`
+  @bot set nobackfill all except cdn-test
+  @bot optimize rgw cluster-01 max=100`
 }
 
 func (h *Handler) listClusters() string {
@@ -315,8 +322,10 @@ func (h *Handler) listClusters() string {
 	if len(clusters) == 0 {
 		return "当前没有配置任何集群"
 	}
+	sort.Strings(clusters)
+
 	var sb strings.Builder
-	sb.WriteString("**已配置的集群列表:**\n")
+	sb.WriteString(fmt.Sprintf("**已配置的集群列表** (共 %d 套):\n", len(clusters)))
 	for _, name := range clusters {
 		sb.WriteString(fmt.Sprintf("  %s\n", name))
 	}
@@ -370,7 +379,7 @@ func (h *Handler) handleSkill(ctx context.Context, action intent.Action) (string
 		if h.dev.DryRun {
 			return h.dryRunReply(clusterName, "skill: "+s.Name(), s.Description()), nil
 		}
-		return h.runSkillOnCluster(ctx, s, clusterName, clusterCfg, action.NodeName)
+		return h.runSkillOnCluster(ctx, s, clusterName, clusterCfg, action.NodeName, action.Args)
 	}
 
 	// Apply exclusions.
@@ -420,7 +429,7 @@ func (h *Handler) handleSkillOnClusters(ctx context.Context, s skill.Skill, clus
 			results = append(results, h.dryRunReply(clusterName, "skill: "+s.Name(), s.Description()))
 			continue
 		}
-		output, err := h.runSkillOnCluster(ctx, s, clusterName, clusterCfg, "")
+		output, err := h.runSkillOnCluster(ctx, s, clusterName, clusterCfg, "", nil)
 		if err != nil {
 			results = append(results, fmt.Sprintf("**%s**: 执行失败: %v", clusterName, err))
 		} else {
@@ -435,7 +444,7 @@ func (h *Handler) handleSkillOnClusters(ctx context.Context, s skill.Skill, clus
 		s.Description(), len(clusters), excludeNote, strings.Join(results, "\n\n---\n\n")), nil
 }
 
-func (h *Handler) runSkillOnCluster(ctx context.Context, s skill.Skill, clusterName string, clusterCfg *config.ClusterConfig, nodeName string) (string, error) {
+func (h *Handler) runSkillOnCluster(ctx context.Context, s skill.Skill, clusterName string, clusterCfg *config.ClusterConfig, nodeName string, args map[string]string) (string, error) {
 	kubeExec, err := h.getKubeExecutor(clusterName, clusterCfg)
 	if err != nil {
 		return "", fmt.Errorf("connect to cluster %s: %w", clusterName, err)
@@ -464,6 +473,7 @@ func (h *Handler) runSkillOnCluster(ctx context.Context, s skill.Skill, clusterN
 		KubeExec:    kubeExec,
 		SSHExec:     h.sshExec,
 		Nodes:       nodes,
+		Args:        args,
 	}
 
 	output, err := s.Execute(sc)
@@ -489,6 +499,7 @@ var noAnalysisSkills = map[string]bool{
 	"unset_no_backfill": true,
 	"set_noout":         true,
 	"unset_noout":       true,
+	"optimize_rgw_pg":   true,
 }
 
 func needsAnalysis(skillName string) bool {

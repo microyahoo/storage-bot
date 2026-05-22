@@ -1,11 +1,15 @@
 package skill
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/microyahoo/storage-bot/config"
 )
+
+const rgwBucketsDataSuffix = ".rgw.buckets.data"
 
 type OSDStatus struct{}
 
@@ -219,6 +223,61 @@ func (s *UnsetNoout) Description() string {
 }
 func (s *UnsetNoout) Execute(sc *Context) (string, error) {
 	return runCephCommands(sc, []string{"osd unset noout", "health"})
+}
+
+// OptimizeRGWBucketsPG optimizes PG placement for the rgw.buckets.data pool
+// using osdmaptool --upmap. It runs entirely inside the toolbox pod.
+// Optional arg "max" controls --upmap-max (default 100).
+type OptimizeRGWBucketsPG struct{}
+
+func (s *OptimizeRGWBucketsPG) Name() string { return "optimize_rgw_pg" }
+func (s *OptimizeRGWBucketsPG) Description() string {
+	return "优化以 " + rgwBucketsDataSuffix + " 结尾的存储池的 PG 分布（osdmaptool upmap）"
+}
+func (s *OptimizeRGWBucketsPG) Execute(sc *Context) (string, error) {
+	if sc.KubeExec == nil {
+		return "", fmt.Errorf("no kubernetes connection available")
+	}
+
+	max := "100"
+	if v, ok := sc.Args["max"]; ok && v != "" {
+		max = v
+	}
+
+	// Find the actual pool name ending with rgwBucketsDataSuffix.
+	poolList, err := sc.KubeExec.RunCephCommand(sc.Ctx, "osd", "pool", "ls")
+	if err != nil {
+		return "", fmt.Errorf("list pools: %w", err)
+	}
+	pool := ""
+	for _, line := range strings.Split(poolList, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasSuffix(line, rgwBucketsDataSuffix) {
+			pool = line
+			break
+		}
+	}
+	if pool == "" {
+		return fmt.Sprintf("未找到以 %q 结尾的存储池", rgwBucketsDataSuffix), nil
+	}
+
+	script := fmt.Sprintf(`set -e
+ceph osd getmap -o /tmp/om
+osdmaptool /tmp/om --upmap /tmp/out.txt --upmap-deviation 1 --upmap-max %s --upmap-pool %q
+echo "=== upmap commands ==="
+cat /tmp/out.txt
+echo "=== applying ==="
+bash /tmp/out.txt
+echo "done"`, max, pool)
+
+	ctx, cancelFunc := context.WithTimeout(sc.Ctx, 90*time.Second)
+	defer cancelFunc()
+
+	output, err := sc.KubeExec.RunShellScript(ctx, script)
+	if err != nil {
+		return "", fmt.Errorf("optimize rgw pg: %w", err)
+	}
+	return fmt.Sprintf("pool: %s\n\n%s", pool, output), nil
 }
 
 // filterNodes returns nodes whose name contains nameHint (case-insensitive).
