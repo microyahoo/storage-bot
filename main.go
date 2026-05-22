@@ -47,15 +47,18 @@ func main() {
 		llmProvider analyzer.LLMProvider
 		az          *analyzer.Analyzer
 	)
-	if !cfg.Dev.DisableLLM {
-		llmProvider, err = analyzer.NewProvider(cfg.LLM)
-		if err != nil {
+	llmProvider, err = analyzer.NewProvider(cfg.LLM)
+	if err != nil {
+		if !cfg.Dev.DisableLLM {
 			slog.Error("failed to create LLM provider", "error", err)
 			os.Exit(1)
 		}
-		az = analyzer.NewAnalyzer(llmProvider)
+		slog.Warn("failed to create LLM provider, LLM features unavailable", "error", err)
 	} else {
-		slog.Warn("dev.disable_llm = true, LLM is disabled; intent fallback skipped, analysis returns raw output")
+		az = analyzer.NewAnalyzer(llmProvider)
+	}
+	if cfg.Dev.DisableLLM {
+		slog.Warn("dev.disable_llm = true, LLM disabled at startup (can be re-enabled via chat)")
 	}
 
 	feishuClient := lark.NewClient(cfg.Feishu.AppID, cfg.Feishu.AppSecret)

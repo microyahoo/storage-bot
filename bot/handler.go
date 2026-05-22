@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
@@ -36,10 +37,11 @@ type Handler struct {
 	dev          config.DevConfig
 	kubeCache    map[string]*executor.KubeExecutor
 	mu           sync.Mutex
+	llmDisabled  atomic.Bool // runtime toggle; initialized from dev.DisableLLM
 }
 
 func NewHandler(feishuClient *lark.Client, mgr *cluster.Manager, sshExec *executor.SSHExecutor, az *analyzer.Analyzer, llm analyzer.LLMProvider, skills *skill.Registry, audit *security.AuditLog, dev config.DevConfig) *Handler {
-	return &Handler{
+	h := &Handler{
 		feishuClient: feishuClient,
 		clusterMgr:   mgr,
 		sshExec:      sshExec,
@@ -51,6 +53,8 @@ func NewHandler(feishuClient *lark.Client, mgr *cluster.Manager, sshExec *execut
 		dev:          dev,
 		kubeCache:    make(map[string]*executor.KubeExecutor),
 	}
+	h.llmDisabled.Store(dev.DisableLLM)
+	return h
 }
 
 func (h *Handler) AddRESTStorage(name string, s *storage.RESTSkill) {
@@ -101,7 +105,7 @@ func (h *Handler) HandleMessage(ctx context.Context, event *larkim.P2MessageRece
 	}
 	action := intent.ParseWithAll(sanitized, h.clusterMgr.List(), knownSkills, h.ListRESTStorages())
 
-	if intent.NeedsFallback(action) && !h.dev.DisableLLM && h.llm != nil {
+	if intent.NeedsFallback(action) && !h.llmDisabled.Load() && h.llm != nil {
 		slog.Info("regex parse incomplete, trying LLM fallback", "raw", sanitized)
 		llmAction, err := intent.ParseWithLLM(ctx, sanitized, h.clusterMgr.List(), h.llm)
 		if err != nil {
@@ -109,7 +113,7 @@ func (h *Handler) HandleMessage(ctx context.Context, event *larkim.P2MessageRece
 		} else {
 			action = llmAction
 		}
-	} else if intent.NeedsFallback(action) && h.dev.DisableLLM {
+	} else if intent.NeedsFallback(action) && h.llmDisabled.Load() {
 		slog.Info("[dev] LLM fallback disabled, using regex result as-is", "raw", sanitized)
 	}
 
@@ -130,6 +134,8 @@ func (h *Handler) HandleMessage(ctx context.Context, event *larkim.P2MessageRece
 		reply = h.listClusters()
 	case intent.ActionListSkills:
 		reply = h.listSkills()
+	case intent.ActionToggleLLM:
+		reply = h.toggleLLM(action.ToggleLLMEnable)
 	case intent.ActionSkill:
 		reply, err = h.handleSkill(ctx, action)
 	case intent.ActionHealth:
@@ -308,13 +314,19 @@ func (h *Handler) helpMessage() string {
   optimize rgw cluster-01 max=100    （指定最大调整条目数，默认 100）
   优化rgw pg cluster-01
 
+**LLM 开关**：
+  enable llm / 开启llm / 启用llm
+  disable llm / 关闭llm / 禁用llm
+
 示例：
   @bot 帮我看看cluster-01的状态
   @bot 分析一下cluster-02的日志
   @bot iostat cdn bd-cdn-node02
   @bot set nobackfill cdn
   @bot set nobackfill all except cdn-test
-  @bot optimize rgw cluster-01 max=100`
+  @bot optimize rgw cluster-01 max=100
+  @bot disable llm
+  @bot enable llm`
 }
 
 func (h *Handler) listClusters() string {
@@ -343,6 +355,14 @@ func (h *Handler) listSkills() string {
 		sb.WriteString(fmt.Sprintf("  **%s** — %s\n", s.Name(), s.Description()))
 	}
 	return sb.String()
+}
+
+func (h *Handler) toggleLLM(enable bool) string {
+	h.llmDisabled.Store(!enable)
+	if enable {
+		return "LLM 已**开启**：将使用 AI 进行意图解析和结果分析"
+	}
+	return "LLM 已**关闭**：仅使用规则解析，不调用 AI"
 }
 
 func (h *Handler) handleSkill(ctx context.Context, action intent.Action) (string, error) {
@@ -532,9 +552,9 @@ func (h *Handler) analyzeOrEcho(ctx context.Context, clusterName, title, diagnos
 	if len(output) > 200 {
 		output = output[:200]
 	}
-	slog.Info("AI analysis with raw output", "cluster", clusterName, "title", title, "diagnostics", output)
-	if h.dev.DisableLLM || h.analyzer == nil {
-		return fmt.Sprintf("**集群 %s — %s [dev mode, LLM disabled]**\n\n```\n%s\n```", clusterName, title, diagnostics)
+	slog.Info("AI analysis with raw output", "cluster", clusterName, "title", title, "diagnostics", output, "llm enable", !h.llmDisabled.Load())
+	if h.llmDisabled.Load() || h.analyzer == nil {
+		return fmt.Sprintf("**集群 %s — %s [LLM disabled]**\n\n```\n%s\n```", clusterName, title, diagnostics)
 	}
 
 	ctx, cancelFunc := context.WithTimeout(ctx, time.Minute)

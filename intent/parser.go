@@ -22,6 +22,7 @@ const (
 	ActionSkill
 	ActionListSkills
 	ActionRESTStorage // query a non-Ceph REST storage system
+	ActionToggleLLM   // enable/disable LLM at runtime
 )
 
 func (t ActionType) String() string {
@@ -42,6 +43,8 @@ func (t ActionType) String() string {
 		return "list skills"
 	case ActionRESTStorage:
 		return "rest storage"
+	case ActionToggleLLM:
+		return "toggle llm"
 	default:
 		return "unknown"
 	}
@@ -55,6 +58,7 @@ type Action struct {
 	SkillName       string
 	StorageName     string            // for ActionRESTStorage
 	Args            map[string]string // optional skill parameters
+	ToggleLLMEnable bool              // for ActionToggleLLM: true=enable, false=disable
 	RawMessage      string
 }
 
@@ -72,6 +76,15 @@ func ParseWithAll(message string, knownClusters []string, knownSkills []string, 
 	msg := stripMention(message)
 	action := Action{RawMessage: msg}
 	lower := strings.ToLower(msg)
+
+	// LLM toggle — checked before skill aliases to avoid conflicts.
+	if strings.Contains(lower, "llm") {
+		action.Type = ActionToggleLLM
+		action.ToggleLLMEnable = strings.Contains(lower, "enable") ||
+			strings.Contains(lower, "开启") || strings.Contains(lower, "打开") ||
+			strings.Contains(lower, "启用") || strings.Contains(lower, "on")
+		return action
+	}
 
 	// Skill alias table — checked FIRST so multi-word skill commands (e.g. "unset nobackfill all",
 	// "list nodes cdn") are not swallowed by the coarser "list clusters" or NodeDiag checks below.
@@ -233,7 +246,8 @@ Rules:
 }
 
 func NeedsFallback(action Action) bool {
-	if action.Type == ActionHelp || action.Type == ActionListClusters || action.Type == ActionListSkills {
+	if action.Type == ActionHelp || action.Type == ActionListClusters ||
+		action.Type == ActionListSkills || action.Type == ActionToggleLLM {
 		return false
 	}
 	return action.ClusterName == ""
