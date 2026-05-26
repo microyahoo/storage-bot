@@ -1,0 +1,33 @@
+{{define "home-content"}}
+<div class="stat-row">
+  <div class="stat"><div class="label">集群总数</div><div class="value">{{len .Clusters}}</div></div>
+  <div class="stat"><div class="label">Skills</div><div class="value">{{.SkillCount}}</div></div>
+  <div class="stat"><div class="label">LLM 状态</div><div class="value">{{if .LLMEnabled}}<span class="badge ok">已开启</span>{{else}}<span class="badge warn">已关闭</span>{{end}}</div></div>
+</div>
+
+<div class="card">
+  <h2>集群列表</h2>
+  {{if .Clusters}}
+  <table>
+    <thead><tr><th>名称</th><th>Namespace</th><th>Toolbox Pod</th><th>Gateway</th><th>操作</th></tr></thead>
+    <tbody>
+    {{range .Clusters}}
+      <tr>
+        <td><a href="/clusters/{{.Name}}">{{.Name}}</a></td>
+        <td>{{.Namespace}}</td>
+        <td>{{.ToolboxPod}}</td>
+        <td>{{if .GatewayHost}}{{.GatewayHost}}{{else}}<span class="muted">-</span>{{end}}</td>
+        <td>
+          <a href="/clusters/{{.Name}}/nodes">节点</a> ·
+          <a href="/clusters/{{.Name}}/health">健康</a>
+        </td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <div class="empty">未配置任何集群</div>
+  {{end}}
+</div>
+{{end}}
+{{define "content"}}{{template "home-content" .}}{{end}}

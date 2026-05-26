@@ -1,0 +1,15 @@
+{{define "health-content"}}
+<div class="card">
+  <h2>{{.ClusterName}} — 健康状态</h2>
+  {{if .Error}}
+  <div class="err-msg">{{.Error}}</div>
+  {{else}}
+  <pre>{{.Output}}</pre>
+  {{end}}
+  <p style="margin-top:14px">
+    <a href="/clusters/{{.ClusterName}}/health">↻ 刷新</a> &nbsp;·&nbsp;
+    <a href="/clusters/{{.ClusterName}}">← 返回集群概览</a>
+  </p>
+</div>
+{{end}}
+{{define "content"}}{{template "health-content" .}}{{end}}

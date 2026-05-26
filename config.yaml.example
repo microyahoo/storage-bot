@@ -21,6 +21,12 @@ dev:
   disable_llm: false
   dry_run: false
 
+# Optional admin web UI. Leave `listen` empty to disable.
+web:
+  listen: ":8080"
+  username: "admin"
+  password: "change-me"
+
 # --- Provider examples ---
 #
 # Claude (default):

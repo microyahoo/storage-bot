@@ -1,0 +1,17 @@
+{{define "cluster-content"}}
+<div class="card">
+  <h2>{{.Cluster.Name}} — 概览</h2>
+  <table>
+    <tr><th style="width:160px">Namespace</th><td>{{.Cluster.Namespace}}</td></tr>
+    <tr><th>Toolbox Pod</th><td>{{.Cluster.ToolboxPod}}</td></tr>
+    <tr><th>Kubeconfig</th><td>{{.Cluster.Kubeconfig}}</td></tr>
+    <tr><th>Gateway</th><td>{{if .Cluster.GatewayHost}}{{.Cluster.GatewayHost}}{{else}}<span class="muted">未配置</span>{{end}}</td></tr>
+  </table>
+  <p style="margin-top:14px">
+    <a href="/clusters/{{.Cluster.Name}}/nodes">查看节点列表 →</a> &nbsp;·&nbsp;
+    <a href="/clusters/{{.Cluster.Name}}/health">查看健康状态 →</a> &nbsp;·&nbsp;
+    <a href="/run?cluster={{.Cluster.Name}}">在该集群执行 Skill →</a>
+  </p>
+</div>
+{{end}}
+{{define "content"}}{{template "cluster-content" .}}{{end}}

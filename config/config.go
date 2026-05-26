@@ -11,8 +11,16 @@ type Config struct {
 	Feishu       FeishuConfig                  `yaml:"feishu"`
 	LLM          LLMConfig                     `yaml:"llm"`
 	Dev          DevConfig                     `yaml:"dev"`
+	Web          WebConfig                     `yaml:"web"`
 	Clusters     map[string]*ClusterConfig     `yaml:"clusters"`
 	RESTStorages map[string]*RESTStorageConfig `yaml:"rest_storages"`
+}
+
+// WebConfig configures the admin web UI. If Listen is empty, the web server is disabled.
+type WebConfig struct {
+	Listen   string `yaml:"listen"`   // e.g. ":8080" or "127.0.0.1:8080"
+	Username string `yaml:"username"` // Basic Auth username; empty disables auth (not recommended)
+	Password string `yaml:"password"` // Basic Auth password
 }
 
 type DevConfig struct {

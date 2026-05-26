@@ -159,8 +159,8 @@ func (k *KubeExecutor) CephHealth(ctx context.Context) (string, error) {
 	commands := [][]string{
 		{"status"},
 		{"health", "detail"},
-		{"osd", "tree"},
 		{"df"},
+		{"osd", "tree"},
 	}
 
 	var results []string

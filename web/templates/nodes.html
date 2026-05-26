@@ -1,0 +1,21 @@
+{{define "nodes-content"}}
+<div class="card">
+  <h2>{{.ClusterName}} — 节点列表 ({{len .Nodes}})</h2>
+  {{if .Error}}
+  <div class="err-msg">{{.Error}}</div>
+  {{else if .Nodes}}
+  <table>
+    <thead><tr><th>名称</th><th>Host</th></tr></thead>
+    <tbody>
+    {{range .Nodes}}
+      <tr><td>{{.Name}}</td><td>{{.Host}}</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <div class="empty">未发现节点（可能未配置 gateway_node 或 ssh_nodes）</div>
+  {{end}}
+  <p style="margin-top:14px"><a href="/clusters/{{.ClusterName}}">← 返回集群概览</a></p>
+</div>
+{{end}}
+{{define "content"}}{{template "nodes-content" .}}{{end}}

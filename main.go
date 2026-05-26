@@ -21,6 +21,7 @@ import (
 	"github.com/microyahoo/storage-bot/security"
 	"github.com/microyahoo/storage-bot/skill"
 	"github.com/microyahoo/storage-bot/storage"
+	"github.com/microyahoo/storage-bot/web"
 )
 
 func main() {
@@ -128,6 +129,19 @@ func main() {
 	defer cancel()
 
 	go watcher.Start(ctx)
+
+	if cfg.Web.Listen != "" {
+		webSrv, err := web.NewServer(cfg.Web, handler, handler)
+		if err != nil {
+			slog.Error("failed to init web server", "error", err)
+			os.Exit(1)
+		}
+		go func() {
+			if err := webSrv.Start(ctx); err != nil {
+				slog.Error("web server error", "error", err)
+			}
+		}()
+	}
 
 	slog.Info("starting storage-bot, connecting to Feishu...")
 

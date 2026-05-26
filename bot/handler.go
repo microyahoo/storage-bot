@@ -90,6 +90,14 @@ func (h *Handler) HandleMessage(ctx context.Context, event *larkim.P2MessageRece
 		return nil
 	}
 
+	// Ignore @all messages in group chats — only respond to direct @bot mentions.
+	if msg.ChatType != nil && *msg.ChatType == "group" {
+		if !isBotMentioned(msg.Mentions) {
+			slog.Info("ignoring @all message in group", "text", text)
+			return nil
+		}
+	}
+
 	userID := ""
 	if event.Event.Sender != nil && event.Event.Sender.SenderId != nil && event.Event.Sender.SenderId.OpenId != nil {
 		userID = *event.Event.Sender.SenderId.OpenId
@@ -649,4 +657,19 @@ func filterNodes(nodes []config.SSHNode, nameHint string) []config.SSHNode {
 		}
 	}
 	return result
+}
+
+// isBotMentioned checks if the bot was explicitly mentioned (not just @all).
+// Returns true if mentions is empty (p2p chat) or contains a specific user mention.
+// Returns false if the only mention is @all (key="all").
+func isBotMentioned(mentions []*larkim.MentionEvent) bool {
+	if len(mentions) == 0 {
+		return true // p2p chat or no mentions
+	}
+	for _, m := range mentions {
+		if m.Key != nil && *m.Key != "all" {
+			return true // specific user mention (bot or other user)
+		}
+	}
+	return false // only @all
 }

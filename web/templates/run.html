@@ -1,0 +1,47 @@
+{{define "run-content"}}
+<div class="card">
+  <h2>在线执行 Skill</h2>
+  <form method="post" action="/run">
+    <div>
+      <label>Skill</label>
+      <select name="skill" required>
+        <option value="">— 选择 skill —</option>
+        {{range .Skills}}
+          <option value="{{.Name}}" {{if eq .Name $.SelectedSkill}}selected{{end}}>{{.Name}} — {{.Description}}</option>
+        {{end}}
+      </select>
+    </div>
+    <div>
+      <label>集群</label>
+      <select name="cluster" required>
+        <option value="">— 选择集群 —</option>
+        {{range .Clusters}}
+          <option value="{{.Name}}" {{if eq .Name $.SelectedCluster}}selected{{end}}>{{.Name}}</option>
+        {{end}}
+      </select>
+    </div>
+    <div>
+      <label>节点 (可选)</label>
+      <input type="text" name="node" value="{{.SelectedNode}}" placeholder="node-1">
+    </div>
+    <div>
+      <label>参数 max (可选)</label>
+      <input type="text" name="max" value="{{.SelectedMax}}" placeholder="200">
+    </div>
+    <div><button type="submit">执行</button></div>
+  </form>
+  <p class="muted" style="margin-top:14px">注意：执行会调用集群命令，请确认操作。所有执行都会记录到 audit log。</p>
+</div>
+
+{{if .Executed}}
+<div class="card">
+  <h2>执行结果 — {{.SelectedSkill}} @ {{.SelectedCluster}}</h2>
+  {{if .Error}}
+  <div class="err-msg">{{.Error}}</div>
+  {{else}}
+  <pre>{{.Output}}</pre>
+  {{end}}
+</div>
+{{end}}
+{{end}}
+{{define "content"}}{{template "run-content" .}}{{end}}
