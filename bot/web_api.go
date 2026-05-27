@@ -11,7 +11,6 @@ type ClusterSummary struct {
 	Name        string
 	Namespace   string
 	Kubeconfig  string
-	ToolboxPod  string
 	GatewayHost string
 	NodeCount   int // 0 if not yet resolved
 }
@@ -44,7 +43,6 @@ func (h *Handler) ListClusters() []ClusterSummary {
 			Name:       name,
 			Namespace:  cfg.Namespace,
 			Kubeconfig: cfg.Kubeconfig,
-			ToolboxPod: cfg.ToolboxPod,
 		}
 		if cfg.GatewayNode != nil {
 			s.GatewayHost = cfg.GatewayNode.Host

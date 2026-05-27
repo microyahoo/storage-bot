@@ -9,13 +9,12 @@
   <h2>集群列表</h2>
   {{if .Clusters}}
   <table>
-    <thead><tr><th>名称</th><th>Namespace</th><th>Toolbox Pod</th><th>Gateway</th><th>操作</th></tr></thead>
+    <thead><tr><th>名称</th><th>Namespace</th><th>Gateway</th><th>操作</th></tr></thead>
     <tbody>
     {{range .Clusters}}
       <tr>
         <td><a href="/clusters/{{.Name}}">{{.Name}}</a></td>
         <td>{{.Namespace}}</td>
-        <td>{{.ToolboxPod}}</td>
         <td>{{if .GatewayHost}}{{.GatewayHost}}{{else}}<span class="muted">-</span>{{end}}</td>
         <td>
           <a href="/clusters/{{.Name}}/nodes">节点</a> ·

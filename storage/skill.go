@@ -6,14 +6,15 @@ import (
 	"strings"
 )
 
-// RESTSkill wraps a RESTBackend as a queryable skill target.
-// It is registered under the storage name and handles cluster-info, dir-usage, and health.
+// RESTSkill wraps any storage Backend (generic REST or Yanrong) as a queryable
+// skill target. It is registered under the storage name and handles cluster-info,
+// dir-usage, and health.
 type RESTSkill struct {
 	name    string
-	backend *RESTBackend
+	backend Backend
 }
 
-func NewRESTSkill(name string, backend *RESTBackend) *RESTSkill {
+func NewRESTSkill(name string, backend Backend) *RESTSkill {
 	return &RESTSkill{name: name, backend: backend}
 }
 

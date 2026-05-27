@@ -96,10 +96,7 @@ clusters:
         gateway_key_file: "/root/.ssh/id_rsa"  # gateway 上的密钥路径，连其他节点用
 
 rest_storages:
-    storage-nfs-01:
-      base_url: "http://10.0.100.5:8080"
-      api_key: "xxxxx"
-      endpoints:
-        cluster_info: "/api/v1/cluster"
-        dir_usage: "/api/v1/usage?path=%s"   # %s 会被替换成路径
-        health_check: "/api/v1/health"
+    yrfs01:                                      # 焱融云文件存储 (YRFS)
+      base_url: "https://192.168.73.25"
+      username: "admin"
+      password: "Passw0rd"

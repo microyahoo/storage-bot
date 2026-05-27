@@ -70,19 +70,12 @@ type SSHNode struct {
 	GatewayKeyFile string `yaml:"gateway_key_file"`
 }
 
-// RESTStorageConfig represents a non-Ceph storage system accessible via REST API.
+// RESTStorageConfig represents a Yanrong cloud filesystem accessible via its
+// REST API. Auth is via username/password (twice-MD5 hashed by the backend).
 type RESTStorageConfig struct {
-	BaseURL string `yaml:"base_url"`
-	APIKey  string `yaml:"api_key"`
-	// Endpoints configures which API paths to call.
-	Endpoints RESTEndpointsConfig `yaml:"endpoints"`
-}
-
-type RESTEndpointsConfig struct {
-	ClusterInfo string `yaml:"cluster_info"`
-	// DirUsage may contain %s for the path argument, e.g. "/api/usage?path=%s"
-	DirUsage    string `yaml:"dir_usage"`
-	HealthCheck string `yaml:"health_check"`
+	BaseURL  string `yaml:"base_url"`
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
 }
 
 func Load(path string) (*Config, error) {
@@ -123,9 +116,6 @@ func Load(path string) (*Config, error) {
 		if cluster.Namespace == "" {
 			cluster.Namespace = "rook-ceph"
 		}
-		if cluster.ToolboxPod == "" {
-			cluster.ToolboxPod = "rook-ceph-tools"
-		}
 		if cluster.Kubeconfig == "" {
 			return nil, fmt.Errorf("cluster %q: kubeconfig is required", name)
 		}
@@ -140,9 +130,15 @@ func Load(path string) (*Config, error) {
 
 	// Reject overlap between clusters and rest_storages: the intent parser routes
 	// by name, and a duplicate would silently shadow one or the other.
-	for name := range cfg.RESTStorages {
+	for name, rs := range cfg.RESTStorages {
 		if _, dup := cfg.Clusters[name]; dup {
 			return nil, fmt.Errorf("name %q is used by both clusters and rest_storages; rename one", name)
+		}
+		if rs.BaseURL == "" {
+			return nil, fmt.Errorf("rest_storages %q: base_url is required", name)
+		}
+		if rs.Username == "" || rs.Password == "" {
+			return nil, fmt.Errorf("rest_storages %q: username and password are required", name)
 		}
 	}
 

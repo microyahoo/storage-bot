@@ -70,15 +70,11 @@ func main() {
 
 	handler := bot.NewHandler(feishuClient, clusterMgr, sshExec, az, llmProvider, skills, audit, cfg.Dev)
 
-	// Register REST storage backends
+	// Register REST storage backends (Yanrong only).
 	for name, restCfg := range cfg.RESTStorages {
-		backend := storage.NewRESTBackend(name, restCfg.BaseURL, restCfg.APIKey, storage.RESTEndpoints{
-			ClusterInfo: restCfg.Endpoints.ClusterInfo,
-			DirUsage:    restCfg.Endpoints.DirUsage,
-			HealthCheck: restCfg.Endpoints.HealthCheck,
-		})
+		backend := storage.NewYanrongBackend(name, restCfg.BaseURL, restCfg.Username, restCfg.Password)
 		handler.AddRESTStorage(name, storage.NewRESTSkill(name, backend))
-		slog.Info("registered REST storage", "name", name, "base_url", restCfg.BaseURL)
+		slog.Info("registered REST storage", "name", name, "type", backend.Type(), "base_url", restCfg.BaseURL)
 	}
 
 	// Config hot-reload: watch file changes + SIGHUP
