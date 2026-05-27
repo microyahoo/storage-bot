@@ -10,7 +10,9 @@
 - **磁盘 IO 统计**：对指定集群或单个节点执行 `iostat`，输出原始统计数据
 - **Ceph Skill**：OSD / PG / Pool / 容量 / 慢请求 / Monitor / Crash / FSID / Mon IP 等一键查询
 - **Flag 操作**：set/unset nobackfill、norebalance、norecover、noout，支持单套、前缀批量、全量（含排除）
-- **REST 存储**：对接任意实现了标准端点的非 Ceph 存储系统（NFS、对象存储等）
+- **REST 存储**：对接 Yanrong (yrfs) 云存储 REST API，支持集群信息、健康、配额列表、用户目录查询
+- **Web 管理界面**：内置 HTTP 服务，可在浏览器查看已注册的集群、技能、节点和执行历史
+- **yrfsctl CLI**：独立命令行工具，不经过 bot 直接调用 Yanrong API 做调试
 - **配置热重载**：修改 config.yaml 或发送 SIGHUP，30 秒内自动生效，无需重启
 
 ## 架构
@@ -27,9 +29,11 @@ bot/handler.go        ← 路由、集群查找、Skill 调度
   ├── executor/kube.go   ← kubectl exec 进 rook-ceph-tools Pod 执行 ceph 命令
   ├── executor/ssh.go    ← SSH 直连或经 gateway 跳板收集节点信息
   ├── skill/builtin.go   ← 内置 Skill 实现
-  ├── storage/           ← REST 存储后端
+  ├── storage/           ← Yanrong (yrfs) REST 存储后端
   └── analyzer/          ← LLM 分析（Claude / OpenAI / DeepSeek / 千问 / Ollama）
 ```
+
+`cmd/yrfsctl/` 提供独立 CLI 工具，复用 `storage.YanrongBackend`，可在不连飞书的情况下直接调试 Yanrong API。
 
 ## 快速开始
 
@@ -179,6 +183,36 @@ unset nobackfill all
 unset noout cdn-01
 ```
 
+### Yanrong (yrfs) 存储
+
+在 `rest_storages` 中配置一个 Yanrong 存储后，可按存储名路由：
+
+```
+# 集群信息 / 健康
+yrfs01
+yrfs01 health
+
+# 配额
+yrfs01 quotas                              # 全部配额列表
+yrfs01 usage /drtraining/user/aoke         # 精确路径
+
+# 用户目录（用配置里的 private_user_prefix / public_user_prefix 拼接）
+yrfs01 user aoke              # 默认 private
+yrfs01 user aoke public
+yrfs01 用户 aoke 公共
+```
+
+也可以用 `yrfsctl` CLI 在终端直接调试，无需走飞书：
+
+```bash
+yrfsctl --config ./config.yaml --name yrfs01 info
+yrfsctl --name yrfs01 quota --path /drtraining/user/aoke
+yrfsctl --name yrfs01 quota --user aoke --scope private
+yrfsctl --base-url https://10.0.0.5 --username admin --password 'pw' health
+```
+
+凭据优先级：`--base-url/--username/--password` 标志 > `YR_BASE_URL / YR_USERNAME / YR_PASSWORD` 环境变量 > config.yaml 的 `rest_storages[--name]`。
+
 ## 配置参考
 
 ### 完整字段说明
@@ -202,7 +236,6 @@ clusters:
   <集群名>:
     kubeconfig: "/path/to/kubeconfig"
     namespace: "rook-ceph"             # 默认 rook-ceph
-    toolbox_pod: "rook-ceph-tools"     # 默认 rook-ceph-tools
     server_override: "https://IP:6443" # 覆盖 kubeconfig 中的 apiserver 地址
     insecure_skip_tls_verify: false    # 跳过 TLS 验证（不推荐）
 
@@ -223,13 +256,18 @@ clusters:
         key_file: "/etc/storage-bot/ssh/id_rsa"
 
 rest_storages:
-  <存储名>:
-    base_url: "http://10.0.100.5:8080"
-    api_key: "xxxx"
-    endpoints:
-      cluster_info: "/api/v1/cluster"
-      dir_usage: "/api/v1/usage?path=%s"  # %s 替换为查询路径
-      health_check: "/api/v1/health"
+  <存储名>:                            # 不能与 clusters 重名
+    base_url: "https://10.0.100.5"     # Yanrong 管理面入口
+    username: "admin"
+    password: "xxxx"
+    # 用户目录前缀，可选；用于将 `yrfs01 user aoke` 自动展开成完整路径
+    public_user_prefix:  "/public-data/user"
+    private_user_prefix: "/drtraining/user"
+
+web:
+  listen: ":8080"        # 留空则禁用 Web UI
+  username: "admin"      # Basic Auth；留空则关闭鉴权（不建议）
+  password: "xxxx"
 ```
 
 ### 环境变量

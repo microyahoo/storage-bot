@@ -326,6 +326,15 @@ func (h *Handler) helpMessage() string {
   enable llm / 开启llm / 启用llm
   disable llm / 关闭llm / 禁用llm
 
+**Yanrong (yrfs) 存储**（按 rest_storages 名称路由，如 yrfs01）：
+  集群信息:   yrfs01 / yrfs01 info
+  健康状态:   yrfs01 health / yrfs01 状态
+  配额列表:   yrfs01 quotas / yrfs01 配额
+  精确路径:   yrfs01 usage /drtraining/user/aoke
+  用户目录:   yrfs01 user aoke              （默认 private，自动拼接 private_user_prefix）
+              yrfs01 user aoke public       （拼接 public_user_prefix）
+              yrfs01 用户 aoke 公共
+
 示例：
   @bot 帮我看看cluster-01的状态
   @bot 分析一下cluster-02的日志
@@ -333,21 +342,37 @@ func (h *Handler) helpMessage() string {
   @bot set nobackfill cdn
   @bot set nobackfill all except cdn-test
   @bot optimize rgw cluster-01 max=100
+  @bot yrfs01 user aoke private
+  @bot yrfs01 quotas
   @bot disable llm
   @bot enable llm`
 }
 
 func (h *Handler) listClusters() string {
 	clusters := h.clusterMgr.List()
-	if len(clusters) == 0 {
-		return "当前没有配置任何集群"
-	}
+	rest := h.ListRESTStorages()
 	sort.Strings(clusters)
+	sort.Strings(rest)
+
+	if len(clusters) == 0 && len(rest) == 0 {
+		return "当前没有配置任何集群或存储"
+	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("**已配置的集群列表** (共 %d 套):\n", len(clusters)))
-	for _, name := range clusters {
-		sb.WriteString(fmt.Sprintf("  %s\n", name))
+	if len(clusters) > 0 {
+		sb.WriteString(fmt.Sprintf("**Ceph 集群** (共 %d 套):\n", len(clusters)))
+		for _, name := range clusters {
+			sb.WriteString(fmt.Sprintf("  %s\n", name))
+		}
+	}
+	if len(rest) > 0 {
+		if sb.Len() > 0 {
+			sb.WriteString("\n")
+		}
+		sb.WriteString(fmt.Sprintf("**Yanrong 存储** (共 %d 套):\n", len(rest)))
+		for _, name := range rest {
+			sb.WriteString(fmt.Sprintf("  %s\n", name))
+		}
 	}
 	return sb.String()
 }
