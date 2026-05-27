@@ -7,6 +7,7 @@ clean:
 
 build-local:
 	@go build -o ./bin/storage-bot main.go
+	@go build -o ./bin/yrfsctl cmd/yrfsctl/main.go
 
 build:
 	docker pull reg.deeproute.ai/deeproute-public/go/golang:alpine

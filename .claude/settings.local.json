@@ -13,7 +13,8 @@
       "Bash(go vet *)",
       "Bash(go test *)",
       "Bash(go run *)",
-      "Bash(go doc *)"
+      "Bash(go doc *)",
+      "Bash(go get *)"
     ]
   }
 }
