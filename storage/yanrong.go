@@ -11,6 +11,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -34,6 +37,11 @@ type YanrongBackend struct {
 	password string
 	client   *http.Client
 
+	// User-path prefixes used by ResolveUserPath to turn a user name into
+	// a full quota path. Either may be empty to disable that scope.
+	publicUserPrefix  string
+	privateUserPrefix string
+
 	mu    sync.Mutex
 	token string
 }
@@ -52,32 +60,227 @@ func NewYanrongBackend(name, baseURL, username, password string) *YanrongBackend
 	}
 }
 
+// SetUserPrefixes configures the public/private user-path prefixes used by
+// ResolveUserPath. Either may be empty to disable that scope.
+func (y *YanrongBackend) SetUserPrefixes(public, private string) {
+	y.publicUserPrefix = public
+	y.privateUserPrefix = private
+}
+
+// ResolveUserPath turns a user name (e.g. "aoke") into a full quota path
+// (e.g. "/drtraining/user/aoke") based on scope ("public" or "private").
+func (y *YanrongBackend) ResolveUserPath(user, scope string) (string, error) {
+	user = strings.TrimSpace(user)
+	if user == "" {
+		return "", fmt.Errorf("user is required")
+	}
+	var prefix string
+	switch strings.ToLower(strings.TrimSpace(scope)) {
+	case "public":
+		prefix = y.publicUserPrefix
+	case "private", "":
+		prefix = y.privateUserPrefix
+	default:
+		return "", fmt.Errorf("unknown scope %q (want public or private)", scope)
+	}
+	if prefix == "" {
+		return "", fmt.Errorf("no %s_user_prefix configured for storage %q", strings.ToLower(scope), y.name)
+	}
+	return filepath.Join(prefix, user), nil
+}
+
+// DirUsageForUser resolves a user name through ResolveUserPath and
+// returns the quota for the resulting path.
+func (y *YanrongBackend) DirUsageForUser(ctx context.Context, user, scope string) (string, error) {
+	path, err := y.ResolveUserPath(user, scope)
+	if err != nil {
+		return "", err
+	}
+	return y.DirUsage(ctx, path)
+}
+
 func (y *YanrongBackend) Type() string { return "yanrong" }
 
-// ClusterInfo returns the cluster license / version info. Yanrong exposes this
-// at /api/v3/license; if the endpoint is rejected, fall back to a quotas list
-// so the user still sees something useful.
+// ClusterInfo returns a curated summary of /api/v3/overview: product info,
+// redundancy / EC model, and capacity numbers. /overview is huge (mostly
+// dashboard time-series); we extract only what an operator cares about.
 func (y *YanrongBackend) ClusterInfo(ctx context.Context) (string, error) {
-	return y.authedGet(ctx, "/api/v3/license", nil)
+	return y.overviewSummary(ctx)
 }
 
-// HealthCheck pings the cluster status endpoint.
+// HealthCheck returns the same curated /api/v3/overview summary as ClusterInfo.
+// Yanrong does not expose a separate cluster-status endpoint that's stable
+// across versions, but /overview always includes a `health` subobject.
 func (y *YanrongBackend) HealthCheck(ctx context.Context) (string, error) {
-	return y.authedGet(ctx, "/api/v3/cluster/status", nil)
+	return y.overviewSummary(ctx)
 }
 
-// DirUsage queries the quota for a path (matches the get_quota example).
+func (y *YanrongBackend) overviewSummary(ctx context.Context) (string, error) {
+	raw, err := y.authedGet(ctx, "/api/v3/overview", url.Values{"lang": {"zh"}})
+	if err != nil {
+		return "", err
+	}
+	summary, ok := formatOverview([]byte(raw))
+	if !ok {
+		// Parsing failed — fall back to the raw JSON so the operator can debug.
+		return raw, nil
+	}
+	return summary, nil
+}
+
+// ListQuotas paginates through /api/v3/quotas and returns a pretty-printed
+// summary of every quota entry in the cluster.
+func (y *YanrongBackend) ListQuotas(ctx context.Context) (string, error) {
+	quotas, err := y.listAllQuotas(ctx)
+	if err != nil {
+		return "", err
+	}
+	return formatQuotas(quotas), nil
+}
+
+// DirUsage looks up the quota for an exact path. Yanrong's quota API does not
+// support filtering by key=<path> reliably, so we list every quota (paginated)
+// and find the one whose `path` equals the requested path. Trailing slashes
+// are normalized so "/foo" and "/foo/" match the same entry.
 func (y *YanrongBackend) DirUsage(ctx context.Context, path string) (string, error) {
 	if path == "" {
 		path = "/"
 	}
-	q := url.Values{
-		"page":      {"1"},
-		"page_size": {"10"},
-		"lang":      {"zh"},
-		"key":       {path},
+	want := normalizeQuotaPath(path)
+
+	quotas, err := y.listAllQuotas(ctx)
+	if err != nil {
+		return "", err
 	}
-	return y.authedGet(ctx, "/api/v3/quotas", q)
+	for _, q := range quotas {
+		if normalizeQuotaPath(q.Path) == want {
+			return formatQuotaEntry(q), nil
+		}
+	}
+	return "", fmt.Errorf("no quota found for path %q (scanned %d entries)", path, len(quotas))
+}
+
+// listAllQuotas paginates /api/v3/quotas until pagination.total entries have
+// been collected. Pages are pulled in order; we don't try to parallelize since
+// the API returns the total count up front and 100/page keeps it cheap.
+func (y *YanrongBackend) listAllQuotas(ctx context.Context) ([]quotaEntry, error) {
+	const perPage = 100
+	page := 1
+	var all []quotaEntry
+	for {
+		q := url.Values{
+			"page":      {strconv.Itoa(page)},
+			"page_size": {strconv.Itoa(perPage)},
+			"lang":      {"zh"},
+		}
+		raw, err := y.authedGet(ctx, "/api/v3/quotas", q)
+		if err != nil {
+			return nil, fmt.Errorf("list quotas page %d: %w", page, err)
+		}
+		var resp struct {
+			Data struct {
+				List       []quotaEntry `json:"list"`
+				Pagination struct {
+					Total        int `json:"total"`
+					CurrentPage  int `json:"current_page"`
+					PerPageCount int `json:"per_page_count"`
+				} `json:"pagination"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal([]byte(raw), &resp); err != nil {
+			return nil, fmt.Errorf("parse quotas page %d: %w", page, err)
+		}
+		all = append(all, resp.Data.List...)
+
+		// Stop conditions: server returned fewer than asked, or we've reached the total.
+		if resp.Data.Pagination.Total == 0 || len(all) >= resp.Data.Pagination.Total {
+			break
+		}
+		if len(resp.Data.List) == 0 {
+			break // defensive: avoid infinite loop if the server lies about total
+		}
+		page++
+	}
+	return all, nil
+}
+
+type quotaEntry struct {
+	QuotaID    int64  `json:"quota_id"`
+	Path       string `json:"path"`
+	SpaceUsed  int64  `json:"space_used"`
+	SpaceLimit int64  `json:"space_limit"`
+	InodeUsed  int64  `json:"inode_used"`
+	InodeLimit int64  `json:"inode_limit"`
+	DirUsed    int64  `json:"dir_used"`
+	FileUsed   int64  `json:"file_used"`
+	OpStatus   string `json:"op_status"`
+	Recursive  bool   `json:"recursive"`
+	EntryID    string `json:"entry_id"`
+}
+
+func normalizeQuotaPath(p string) string {
+	p = strings.TrimSpace(p)
+	if p == "" || p == "/" {
+		return "/"
+	}
+	return strings.TrimRight(p, "/")
+}
+
+func formatQuotaEntry(q quotaEntry) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "path        : %s\n", q.Path)
+	fmt.Fprintf(&b, "quota_id    : %d\n", q.QuotaID)
+	fmt.Fprintf(&b, "recursive   : %t\n", q.Recursive)
+	fmt.Fprintf(&b, "op_status   : %s\n", q.OpStatus)
+	fmt.Fprintf(&b, "space_used  : %s  (raw=%d bytes)\n", humanBytes(float64(q.SpaceUsed)), q.SpaceUsed)
+	if q.SpaceLimit > 0 {
+		pct := float64(q.SpaceUsed) / float64(q.SpaceLimit) * 100
+		fmt.Fprintf(&b, "space_limit : %s  (raw=%d bytes, used %.1f%%)\n", humanBytes(float64(q.SpaceLimit)), q.SpaceLimit, pct)
+	} else {
+		fmt.Fprintf(&b, "space_limit : unlimited\n")
+	}
+	fmt.Fprintf(&b, "inode_used  : %d\n", q.InodeUsed)
+	if q.InodeLimit > 0 {
+		fmt.Fprintf(&b, "inode_limit : %d\n", q.InodeLimit)
+	} else {
+		fmt.Fprintf(&b, "inode_limit : unlimited\n")
+	}
+	fmt.Fprintf(&b, "dir_used    : %d\n", q.DirUsed)
+	fmt.Fprintf(&b, "file_used   : %d\n", q.FileUsed)
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func formatQuotas(quotas []quotaEntry) string {
+	if len(quotas) == 0 {
+		return "(no quotas)"
+	}
+	// Sort by path for stable output.
+	sort.Slice(quotas, func(i, j int) bool { return quotas[i].Path < quotas[j].Path })
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "Quotas (%d total):\n", len(quotas))
+	fmt.Fprintf(&b, "%-50s %12s %12s %10s\n", "PATH", "USED", "LIMIT", "USED%")
+	for _, q := range quotas {
+		limit := "unlimited"
+		pct := "-"
+		if q.SpaceLimit > 0 {
+			limit = humanBytes(float64(q.SpaceLimit))
+			pct = fmt.Sprintf("%.1f%%", float64(q.SpaceUsed)/float64(q.SpaceLimit)*100)
+		}
+		fmt.Fprintf(&b, "%-50s %12s %12s %10s\n",
+			truncate(q.Path, 50), humanBytes(float64(q.SpaceUsed)), limit, pct)
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	if n <= 10 {
+		return s[:n]
+	}
+	return s[:n-10] + "..."
 }
 
 // authedGet runs a GET with the cached token, refreshing once on 401.

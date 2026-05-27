@@ -2,3 +2,4 @@ config.yaml
 storage-bot
 kubecongfigs/*
 config.bak.yaml
+bin/

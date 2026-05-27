@@ -100,3 +100,5 @@ rest_storages:
       base_url: "https://192.168.73.25"
       username: "admin"
       password: "Passw0rd"
+      public_user_prefix: "/public-data/user/"
+      private_user_prefix: "/drtraining/user/"

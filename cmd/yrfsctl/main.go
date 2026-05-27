@@ -64,41 +64,16 @@ func newRootCmd() *cobra.Command {
 	root.PersistentFlags().DurationVar(&flagTimeout, "timeout", 30*time.Second, "request timeout")
 
 	root.AddCommand(
-		newLoginCmd(),
 		newInfoCmd(),
-		newHealthCmd(),
 		newQuotaCmd(),
 	)
 	return root
 }
 
-func newLoginCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "login",
-		Short: "POST /api/auth/tokens and verify auth",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			b, ctx, cancel, err := setup()
-			if err != nil {
-				return err
-			}
-			defer cancel()
-			// Drive a login by issuing the cheapest authed call.
-			out, err := b.HealthCheck(ctx)
-			if err != nil {
-				return err
-			}
-			fmt.Println("login OK")
-			fmt.Println(out)
-			return nil
-		},
-	}
-}
-
 func newInfoCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "info",
-		Short: "GET /api/v3/license — cluster license / version info",
+		Short: "GET /api/v3/overview — cluster info",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			b, ctx, cancel, err := setup()
@@ -116,40 +91,34 @@ func newInfoCmd() *cobra.Command {
 	}
 }
 
-func newHealthCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "health",
-		Short: "GET /api/v3/cluster/status",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			b, ctx, cancel, err := setup()
-			if err != nil {
-				return err
-			}
-			defer cancel()
-			out, err := b.HealthCheck(ctx)
-			if err != nil {
-				return err
-			}
-			fmt.Println(out)
-			return nil
-		},
-	}
-}
-
 func newQuotaCmd() *cobra.Command {
-	var path string
+	var (
+		path  string
+		user  string
+		scope string
+	)
 	cmd := &cobra.Command{
 		Use:   "quota",
-		Short: "GET /api/v3/quotas?key=<path>",
+		Short: "list all quotas, look up by --path, or look up a user's dir via --user/--scope",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if path != "" && user != "" {
+				return fmt.Errorf("--path and --user are mutually exclusive")
+			}
 			b, ctx, cancel, err := setup()
 			if err != nil {
 				return err
 			}
 			defer cancel()
-			out, err := b.DirUsage(ctx, path)
+			var out string
+			switch {
+			case user != "":
+				out, err = b.DirUsageForUser(ctx, user, scope)
+			case path != "":
+				out, err = b.DirUsage(ctx, path)
+			default:
+				out, err = b.ListQuotas(ctx)
+			}
 			if err != nil {
 				return err
 			}
@@ -157,18 +126,21 @@ func newQuotaCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&path, "path", "/", "directory path to query (mapped to ?key=)")
+	cmd.Flags().StringVar(&path, "path", "", "if set, return the quota for this exact path")
+	cmd.Flags().StringVar(&user, "user", "", "user name, eg. liangzheng; resolved via configured user prefix")
+	cmd.Flags().StringVar(&scope, "scope", "private", "user-prefix scope when --user is set: public or private")
 	return cmd
 }
 
 // setup resolves credentials and returns a backend + cancellable context.
 // The cancel func MUST be called by the caller to release signal handlers.
 func setup() (*storage.YanrongBackend, context.Context, context.CancelFunc, error) {
-	bURL, user, pass, err := resolveCreds()
+	bURL, user, pass, pubPrefix, privPrefix, err := resolveCreds()
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	backend := storage.NewYanrongBackend("yrfsctl", bURL, user, pass)
+	backend.SetUserPrefixes(pubPrefix, privPrefix)
 	ctx, cancel := signalCtx(flagTimeout)
 	return backend, ctx, cancel, nil
 }
@@ -178,8 +150,9 @@ func setup() (*storage.YanrongBackend, context.Context, context.CancelFunc, erro
 //	flag > env > config > error
 //
 // If --name is empty and the config has exactly one rest_storages entry, that
-// one is used. Otherwise --name is required to disambiguate.
-func resolveCreds() (string, string, string, error) {
+// one is used. Otherwise --name is required to disambiguate. User-path
+// prefixes only come from config (flags/env don't override them).
+func resolveCreds() (string, string, string, string, string, error) {
 	envURL := os.Getenv("YR_BASE_URL")
 	envUser := os.Getenv("YR_USERNAME")
 	envPass := os.Getenv("YR_PASSWORD")
@@ -189,25 +162,25 @@ func resolveCreds() (string, string, string, error) {
 	pass := firstNonEmpty(flagPassword, envPass)
 
 	if bURL != "" && user != "" && pass != "" {
-		return bURL, user, pass, nil // fully overridden, skip config
+		return bURL, user, pass, "", "", nil // fully overridden, skip config
 	}
 
 	cfgPath := pickConfigPath(flagConfig)
 	if cfgPath == "" {
-		return "", "", "", fmt.Errorf("missing credentials: pass --base-url/--username/--password or YR_* env vars, or specify --config")
+		return "", "", "", "", "", fmt.Errorf("missing credentials: pass --base-url/--username/--password or YR_* env vars, or specify --config")
 	}
 
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
-		return "", "", "", fmt.Errorf("load config %s: %w", cfgPath, err)
+		return "", "", "", "", "", fmt.Errorf("load config %s: %w", cfgPath, err)
 	}
 	if len(cfg.RESTStorages) == 0 {
-		return "", "", "", fmt.Errorf("config %s has no rest_storages entries", cfgPath)
+		return "", "", "", "", "", fmt.Errorf("config %s has no rest_storages entries", cfgPath)
 	}
 
 	rs, err := pickStorage(cfg.RESTStorages, flagName)
 	if err != nil {
-		return "", "", "", err
+		return "", "", "", "", "", err
 	}
 
 	bURL = firstNonEmpty(bURL, rs.BaseURL)
@@ -215,9 +188,9 @@ func resolveCreds() (string, string, string, error) {
 	pass = firstNonEmpty(pass, rs.Password)
 
 	if bURL == "" || user == "" || pass == "" {
-		return "", "", "", fmt.Errorf("incomplete credentials after merging config: base_url=%q username=%q password=%q", bURL, user, redact(pass))
+		return "", "", "", "", "", fmt.Errorf("incomplete credentials after merging config: base_url=%q username=%q password=%q", bURL, user, redact(pass))
 	}
-	return bURL, user, pass, nil
+	return bURL, user, pass, rs.PublicUserPrefix, rs.PrivateUserPrefix, nil
 }
 
 func pickConfigPath(explicit string) string {

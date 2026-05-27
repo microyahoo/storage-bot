@@ -72,10 +72,17 @@ type SSHNode struct {
 
 // RESTStorageConfig represents a Yanrong cloud filesystem accessible via its
 // REST API. Auth is via username/password (twice-MD5 hashed by the backend).
+//
+// PublicUserPrefix / PrivateUserPrefix let skills resolve a short user name
+// (e.g. "aoke") into a full quota path (e.g. "/drtraining/user/aoke") without
+// the operator having to type the prefix every time. Leave empty to disable.
 type RESTStorageConfig struct {
 	BaseURL  string `yaml:"base_url"`
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`
+
+	PublicUserPrefix  string `yaml:"public_user_prefix"`
+	PrivateUserPrefix string `yaml:"private_user_prefix"`
 }
 
 func Load(path string) (*Config, error) {
