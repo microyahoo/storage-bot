@@ -72,8 +72,8 @@ func main() {
 
 	// Register REST storage backends (Yanrong only).
 	for name, restCfg := range cfg.RESTStorages {
-		backend := storage.NewYanrongBackend(name, restCfg.BaseURL, restCfg.Username, restCfg.Password)
-		backend.SetUserPrefixes(restCfg.PublicUserPrefix, restCfg.PrivateUserPrefix)
+		backend := storage.NewYanrongBackend(name, restCfg.BaseURL, restCfg.Username, restCfg.Password,
+			storage.WithUserPrefixes(restCfg.PublicUserPrefix, restCfg.PrivateUserPrefix))
 		handler.AddRESTStorage(name, storage.NewRESTSkill(name, backend))
 		slog.Info("registered REST storage", "name", name, "type", backend.Type(), "base_url", restCfg.BaseURL)
 	}

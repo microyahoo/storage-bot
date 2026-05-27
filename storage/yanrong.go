@@ -46,25 +46,36 @@ type YanrongBackend struct {
 	token string
 }
 
+// YanrongOption tunes optional fields on a YanrongBackend. Use the
+// With* helpers below — keeps the constructor signature stable as we
+// add knobs (user prefixes today, maybe per-host timeout / TLS later).
+type YanrongOption func(*YanrongBackend)
+
+// WithUserPrefixes sets the public/private user-path prefixes used by
+// ResolveUserPath. Either may be empty to disable that scope.
+func WithUserPrefixes(public, private string) YanrongOption {
+	return func(y *YanrongBackend) {
+		y.publicUserPrefix = public
+		y.privateUserPrefix = private
+	}
+}
+
 // NewYanrongBackend creates a Yanrong backend. baseURL should be the host root,
 // e.g. "https://192.168.73.25". TLS verification is disabled because Yanrong
 // installs typically use self-signed certs.
-func NewYanrongBackend(name, baseURL, username, password string) *YanrongBackend {
+func NewYanrongBackend(name, baseURL, username, password string, opts ...YanrongOption) *YanrongBackend {
 	tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
-	return &YanrongBackend{
+	y := &YanrongBackend{
 		name:     name,
 		baseURL:  strings.TrimRight(baseURL, "/"),
 		username: username,
 		password: password,
 		client:   &http.Client{Timeout: 30 * time.Second, Transport: tr},
 	}
-}
-
-// SetUserPrefixes configures the public/private user-path prefixes used by
-// ResolveUserPath. Either may be empty to disable that scope.
-func (y *YanrongBackend) SetUserPrefixes(public, private string) {
-	y.publicUserPrefix = public
-	y.privateUserPrefix = private
+	for _, opt := range opts {
+		opt(y)
+	}
+	return y
 }
 
 // ResolveUserPath turns a user name (e.g. "aoke") into a full quota path

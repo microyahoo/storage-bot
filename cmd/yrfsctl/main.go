@@ -139,8 +139,8 @@ func setup() (*storage.YanrongBackend, context.Context, context.CancelFunc, erro
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	backend := storage.NewYanrongBackend("yrfsctl", bURL, user, pass)
-	backend.SetUserPrefixes(pubPrefix, privPrefix)
+	backend := storage.NewYanrongBackend("yrfsctl", bURL, user, pass,
+		storage.WithUserPrefixes(pubPrefix, privPrefix))
 	ctx, cancel := signalCtx(flagTimeout)
 	return backend, ctx, cancel, nil
 }
