@@ -138,6 +138,14 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("llm api_key is required (config or LLM_API_KEY env), or set dev.disable_llm: true")
 	}
 
+	// Reject overlap between clusters and rest_storages: the intent parser routes
+	// by name, and a duplicate would silently shadow one or the other.
+	for name := range cfg.RESTStorages {
+		if _, dup := cfg.Clusters[name]; dup {
+			return nil, fmt.Errorf("name %q is used by both clusters and rest_storages; rename one", name)
+		}
+	}
+
 	return &cfg, nil
 }
 
