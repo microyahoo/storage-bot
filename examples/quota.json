@@ -1,0 +1,144 @@
+{
+  "code": "0",
+  "data": {
+    "path": "",
+    "list": [
+      {
+        "quota_id": 127,
+        "space_used": 127287427465216,
+        "space_limit": 1125899906842624,
+        "inode_used": 234626724,
+        "inode_limit": 0,
+        "dir_used": 11296383,
+        "file_used": 223330341,
+        "op_status": "finished",
+        "recursive": true,
+        "entry_id": "292B02BD6951E713",
+        "path": "/drtraining/user"
+      },
+      {
+        "quota_id": 129,
+        "space_used": 848245424128,
+        "space_limit": 3298534883328,
+        "inode_used": 3748901,
+        "inode_limit": 0,
+        "dir_used": 58499,
+        "file_used": 3690402,
+        "op_status": "finished",
+        "recursive": true,
+        "entry_id": "114F07D1695DCD1E",
+        "path": "/drtraining/user/anrongzhang"
+      },
+      {
+        "quota_id": 401,
+        "space_used": 123437056,
+        "space_limit": 2199023255552,
+        "inode_used": 143,
+        "inode_limit": 0,
+        "dir_used": 1,
+        "file_used": 142,
+        "op_status": "finished",
+        "recursive": false,
+        "entry_id": "28A07D169689C10",
+        "path": "/drtraining/user/aokexie"
+      },
+      {
+        "quota_id": 706,
+        "space_used": 71827456,
+        "space_limit": 3298534883328,
+        "inode_used": 4,
+        "inode_limit": 0,
+        "dir_used": 3,
+        "file_used": 1,
+        "op_status": "finished",
+        "recursive": true,
+        "entry_id": "E907D169AA3C5A",
+        "path": "/drtraining/user/baojunan"
+      },
+      {
+        "quota_id": 130,
+        "space_used": 1261699072,
+        "space_limit": 3298534883328,
+        "inode_used": 1676,
+        "inode_limit": 0,
+        "dir_used": 381,
+        "file_used": 1295,
+        "op_status": "finished",
+        "recursive": true,
+        "entry_id": "11A907D1695DCD1E",
+        "path": "/drtraining/user/biaowu"
+      },
+      {
+        "quota_id": 131,
+        "space_used": 731414528,
+        "space_limit": 3298534883328,
+        "inode_used": 5174,
+        "inode_limit": 0,
+        "dir_used": 646,
+        "file_used": 4528,
+        "op_status": "finished",
+        "recursive": true,
+        "entry_id": "116307D1695DCD1E",
+        "path": "/drtraining/user/bingli"
+      },
+      {
+        "quota_id": 132,
+        "space_used": 0,
+        "space_limit": 3298534883328,
+        "inode_used": 2,
+        "inode_limit": 0,
+        "dir_used": 2,
+        "file_used": 0,
+        "op_status": "finished",
+        "recursive": true,
+        "entry_id": "11C707D1695DCD1E",
+        "path": "/drtraining/user/bingqihuang"
+      },
+      {
+        "quota_id": 744,
+        "space_used": 57075204096,
+        "space_limit": 3298534883328,
+        "inode_used": 15405,
+        "inode_limit": 0,
+        "dir_used": 347,
+        "file_used": 15058,
+        "op_status": "finished",
+        "recursive": true,
+        "entry_id": "9D07D169CB5C15",
+        "path": "/drtraining/user/binlinzhang"
+      },
+      {
+        "quota_id": 133,
+        "space_used": 4797956096,
+        "space_limit": 3298534883328,
+        "inode_used": 3108,
+        "inode_limit": 0,
+        "dir_used": 380,
+        "file_used": 2728,
+        "op_status": "finished",
+        "recursive": true,
+        "entry_id": "118207D1695DCD1E",
+        "path": "/drtraining/user/boli02"
+      },
+      {
+        "quota_id": 707,
+        "space_used": 2391015424,
+        "space_limit": 3298534883328,
+        "inode_used": 5717,
+        "inode_limit": 0,
+        "dir_used": 1314,
+        "file_used": 4403,
+        "op_status": "finished",
+        "recursive": true,
+        "entry_id": "7E07D169A29BC4",
+        "path": "/drtraining/user/boli03"
+      }
+    ],
+    "pagination": {
+      "total": 608,
+      "current_page": 1,
+      "per_page_count": 10
+    }
+  },
+  "msg": ""
+}
