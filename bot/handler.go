@@ -661,15 +661,21 @@ func filterNodes(nodes []config.SSHNode, nameHint string) []config.SSHNode {
 
 // isBotMentioned checks if the bot was explicitly mentioned (not just @all).
 // Returns true if mentions is empty (p2p chat) or contains a specific user mention.
-// Returns false if the only mention is @all (key="all").
+// Returns false if the only mention is @all. Feishu reports @all with key
+// "@_all" (and historically "_all"/"all"); accept all three to be safe.
 func isBotMentioned(mentions []*larkim.MentionEvent) bool {
 	if len(mentions) == 0 {
 		return true // p2p chat or no mentions
 	}
 	for _, m := range mentions {
-		if m.Key != nil && *m.Key != "all" {
-			return true // specific user mention (bot or other user)
+		if m.Key == nil {
+			continue
 		}
+		k := *m.Key
+		if k == "@_all" || k == "_all" || k == "all" {
+			continue
+		}
+		return true // specific user mention (bot or other user)
 	}
 	return false // only @all
 }
