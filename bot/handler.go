@@ -63,6 +63,15 @@ func (h *Handler) AddRESTStorage(name string, s *storage.RESTSkill) {
 	h.restStorages[name] = s
 }
 
+// ReplaceRESTStorages atomically swaps the entire REST storage map. Used by
+// config hot-reload so adds/removes/edits to rest_storages take effect without
+// a restart.
+func (h *Handler) ReplaceRESTStorages(m map[string]*storage.RESTSkill) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.restStorages = m
+}
+
 func (h *Handler) ListRESTStorages() []string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -125,7 +134,13 @@ func (h *Handler) HandleMessage(ctx context.Context, event *larkim.P2MessageRece
 		slog.Info("[dev] LLM fallback disabled, using regex result as-is", "raw", sanitized)
 	}
 
-	slog.Info("parsed intent", "type", action.Type, "skill", action.SkillName, "cluster", action.ClusterName, "node", action.NodeName)
+	slog.Info("parsed intent",
+		"type", action.Type,
+		"skill", action.SkillName,
+		"cluster", action.ClusterName,
+		"node", action.NodeName,
+		"storage", action.StorageName,
+	)
 
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
@@ -326,14 +341,14 @@ func (h *Handler) helpMessage() string {
   enable llm / 开启llm / 启用llm
   disable llm / 关闭llm / 禁用llm
 
-**Yanrong (yrfs) 存储**（按 rest_storages 名称路由，如 yrfs01）：
+**焱融(yrfs) 存储**（按 rest_storages 名称路由，如 yrfs01）：
   集群信息:   yrfs01 / yrfs01 info
   健康状态:   yrfs01 health / yrfs01 状态
   配额列表:   yrfs01 quotas / yrfs01 配额
-  精确路径:   yrfs01 usage /drtraining/user/aoke
-  用户目录:   yrfs01 user aoke              （默认 private，自动拼接 private_user_prefix）
-              yrfs01 user aoke public       （拼接 public_user_prefix）
-              yrfs01 用户 aoke 公共
+  精确路径:   yrfs01 usage /drtraining/user/liangzheng
+  用户目录:   yrfs01 user liangzheng              （默认 private，自动拼接 private_user_prefix）
+              yrfs01 user liangzheng public       （拼接 public_user_prefix）
+              yrfs01 用户 liangzheng 公共
 
 示例：
   @bot 帮我看看cluster-01的状态
@@ -342,7 +357,7 @@ func (h *Handler) helpMessage() string {
   @bot set nobackfill cdn
   @bot set nobackfill all except cdn-test
   @bot optimize rgw cluster-01 max=100
-  @bot yrfs01 user aoke private
+  @bot yrfs01 user liangzheng private
   @bot yrfs01 quotas
   @bot disable llm
   @bot enable llm`
@@ -369,7 +384,7 @@ func (h *Handler) listClusters() string {
 		if sb.Len() > 0 {
 			sb.WriteString("\n")
 		}
-		sb.WriteString(fmt.Sprintf("**Yanrong 存储** (共 %d 套):\n", len(rest)))
+		sb.WriteString(fmt.Sprintf("**焱融存储** (共 %d 套):\n", len(rest)))
 		for _, name := range rest {
 			sb.WriteString(fmt.Sprintf("  %s\n", name))
 		}

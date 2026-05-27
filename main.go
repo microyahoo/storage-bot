@@ -71,19 +71,18 @@ func main() {
 	handler := bot.NewHandler(feishuClient, clusterMgr, sshExec, az, llmProvider, skills, audit, cfg.Dev)
 
 	// Register REST storage backends (Yanrong only).
-	for name, restCfg := range cfg.RESTStorages {
-		backend := storage.NewYanrongBackend(name, restCfg.BaseURL, restCfg.Username, restCfg.Password,
-			storage.WithUserPrefixes(restCfg.PublicUserPrefix, restCfg.PrivateUserPrefix))
-		handler.AddRESTStorage(name, storage.NewRESTSkill(name, backend))
-		slog.Info("registered REST storage", "name", name, "type", backend.Type(), "base_url", restCfg.BaseURL)
-	}
+	handler.ReplaceRESTStorages(buildRESTStorages(cfg.RESTStorages))
 
 	// Config hot-reload: watch file changes + SIGHUP
 	watcher := config.NewWatcher(*configPath)
 	watcher.OnReload(func(newCfg *config.Config) {
 		clusterMgr.Reload(newCfg.Clusters)
 		handler.InvalidateKubeCache()
-		slog.Info("clusters reloaded", "count", len(newCfg.Clusters))
+		handler.ReplaceRESTStorages(buildRESTStorages(newCfg.RESTStorages))
+		slog.Info("config reloaded",
+			"clusters", len(newCfg.Clusters),
+			"rest_storages", len(newCfg.RESTStorages),
+		)
 	})
 
 	eventHandler := dispatcher.NewEventDispatcher("", "").
@@ -151,4 +150,18 @@ func main() {
 
 	<-ctx.Done()
 	slog.Info("shutting down")
+}
+
+// buildRESTStorages constructs a fresh storage skill map from config. Called
+// at startup and again on every hot-reload so adds/removes/edits to
+// rest_storages take effect without a restart.
+func buildRESTStorages(cfgs map[string]*config.RESTStorageConfig) map[string]*storage.RESTSkill {
+	out := make(map[string]*storage.RESTSkill, len(cfgs))
+	for name, rc := range cfgs {
+		backend := storage.NewYanrongBackend(name, rc.BaseURL, rc.Username, rc.Password,
+			storage.WithUserPrefixes(rc.PublicUserPrefix, rc.PrivateUserPrefix))
+		out[name] = storage.NewRESTSkill(name, backend)
+		slog.Info("registered REST storage", "name", name, "type", backend.Type(), "base_url", rc.BaseURL)
+	}
+	return out
 }

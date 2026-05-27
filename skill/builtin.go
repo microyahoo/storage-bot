@@ -270,7 +270,7 @@ echo "=== applying ==="
 bash /tmp/out.txt
 echo "done"`, max, pool)
 
-	ctx, cancelFunc := context.WithTimeout(sc.Ctx, 90*time.Second)
+	ctx, cancelFunc := context.WithTimeout(sc.Ctx, 150*time.Second)
 	defer cancelFunc()
 
 	output, err := sc.KubeExec.RunShellScript(ctx, script)

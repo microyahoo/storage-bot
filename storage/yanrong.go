@@ -78,8 +78,8 @@ func NewYanrongBackend(name, baseURL, username, password string, opts ...Yanrong
 	return y
 }
 
-// ResolveUserPath turns a user name (e.g. "aoke") into a full quota path
-// (e.g. "/drtraining/user/aoke") based on scope ("public" or "private").
+// ResolveUserPath turns a user name (e.g. "liangzheng") into a full quota path
+// (e.g. "/drtraining/user/liangzheng") based on scope ("public" or "private").
 func (y *YanrongBackend) ResolveUserPath(user, scope string) (string, error) {
 	user = strings.TrimSpace(user)
 	if user == "" {

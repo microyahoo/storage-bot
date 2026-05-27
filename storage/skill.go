@@ -20,6 +20,60 @@ func NewRESTSkill(name string, backend Backend) *RESTSkill {
 
 func (s *RESTSkill) StorageName() string { return s.name }
 
+// RESTSkillMetadata exposes a few backend fields for the web UI / list views.
+type RESTSkillMetadata struct {
+	Type              string
+	BaseURL           string
+	PublicUserPrefix  string
+	PrivateUserPrefix string
+}
+
+// Metadata reports backend connection info for display. Returns false if the
+// underlying backend doesn't expose these fields (currently only Yanrong does).
+func (s *RESTSkill) Metadata() (RESTSkillMetadata, bool) {
+	if yb, ok := s.backend.(*YanrongBackend); ok {
+		return RESTSkillMetadata{
+			Type:              yb.Type(),
+			BaseURL:           yb.baseURL,
+			PublicUserPrefix:  yb.publicUserPrefix,
+			PrivateUserPrefix: yb.privateUserPrefix,
+		}, true
+	}
+	return RESTSkillMetadata{Type: s.backend.Type()}, false
+}
+
+// ClusterInfo / HealthCheck / ListQuotas / DirUsageForUser / DirUsage are thin
+// pass-throughs used by the web UI so it doesn't have to type-assert the
+// underlying backend or go through the keyword-parsing Query().
+func (s *RESTSkill) ClusterInfo(ctx context.Context) (string, error) {
+	return s.backend.ClusterInfo(ctx)
+}
+
+func (s *RESTSkill) HealthCheck(ctx context.Context) (string, error) {
+	return s.backend.HealthCheck(ctx)
+}
+
+func (s *RESTSkill) DirUsage(ctx context.Context, path string) (string, error) {
+	return s.backend.DirUsage(ctx, path)
+}
+
+// ListQuotas / DirUsageForUser only work against Yanrong backends.
+func (s *RESTSkill) ListQuotas(ctx context.Context) (string, error) {
+	yb, ok := s.backend.(*YanrongBackend)
+	if !ok {
+		return "", fmt.Errorf("backend %q does not support quota listing", s.backend.Type())
+	}
+	return yb.ListQuotas(ctx)
+}
+
+func (s *RESTSkill) DirUsageForUser(ctx context.Context, user, scope string) (string, error) {
+	yb, ok := s.backend.(*YanrongBackend)
+	if !ok {
+		return "", fmt.Errorf("backend %q does not support user-dir lookup", s.backend.Type())
+	}
+	return yb.DirUsageForUser(ctx, user, scope)
+}
+
 // QueryResult bundles raw output and an optional path that was queried.
 type QueryResult struct {
 	Output string
@@ -62,7 +116,7 @@ func (s *RESTSkill) Query(ctx context.Context, action string) (QueryResult, erro
 		}
 		user, scope := parseUserScope(raw)
 		if user == "" {
-			return QueryResult{}, fmt.Errorf("user name is required, e.g. 'user aoke private'")
+			return QueryResult{}, fmt.Errorf("user name is required, e.g. 'user liangzheng private'")
 		}
 		out, err := yb.DirUsageForUser(ctx, user, scope)
 		return QueryResult{Output: out, Label: fmt.Sprintf("用户目录(%s, %s)", user, scope)}, err
@@ -90,7 +144,7 @@ func stripStorageName(msg, name string) string {
 }
 
 // stripFirstWord removes the leading action keyword and returns the remainder.
-// "usage /foo/bar" → "/foo/bar"; "user aoke private" → "aoke private".
+// "usage /foo/bar" → "/foo/bar"; "user liangzheng private" → "liangzheng private".
 func stripFirstWord(s string) string {
 	fields := strings.Fields(s)
 	if len(fields) <= 1 {
@@ -100,7 +154,7 @@ func stripFirstWord(s string) string {
 }
 
 // parseUserScope pulls the user name and scope from an action like
-// "user aoke private", "private aoke", or "用户 aoke 公共". Scope defaults
+// "user liangzheng private", "private liangzheng", or "用户 liangzheng 公共". Scope defaults
 // to "private" when not given. Unknown words are treated as the user name.
 func parseUserScope(s string) (user, scope string) {
 	scope = "private"

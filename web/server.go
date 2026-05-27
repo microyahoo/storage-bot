@@ -12,6 +12,7 @@ import (
 	"html/template"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -42,7 +43,7 @@ func NewServer(cfg config.WebConfig, h *bot.Handler, llmState LLMState) (*Server
 	// Parse one template set per page so each page's {{define "content"}} only
 	// affects its own set. Putting layout + every page in one set causes their
 	// "content" definitions to clobber each other (last one wins).
-	pages := []string{"home.html", "skills.html", "cluster.html", "nodes.html", "health.html", "run.html"}
+	pages := []string{"home.html", "skills.html", "cluster.html", "nodes.html", "health.html", "run.html", "storage.html", "storage_output.html"}
 	templates := make(map[string]*template.Template, len(pages))
 	for _, page := range pages {
 		tpl, err := template.ParseFS(templatesFS, "templates/layout.html", "templates/"+page)
@@ -60,6 +61,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/skills", s.basicAuth(s.handleSkills))
 	mux.HandleFunc("/run", s.basicAuth(s.handleRun))
 	mux.HandleFunc("/clusters/", s.basicAuth(s.handleClusterRoutes))
+	mux.HandleFunc("/storages/", s.basicAuth(s.handleStorageRoutes))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("ok")) })
 
 	srv := &http.Server{
@@ -130,15 +132,18 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	clusters := s.handler.ListClusters()
+	storages := s.handler.ListRESTStorageSummaries()
 	skills := s.handler.ListSkills()
 	s.render(w, "home.html", struct {
 		baseData
 		Clusters   []bot.ClusterSummary
+		Storages   []bot.RESTStorageSummary
 		SkillCount int
 		LLMEnabled bool
 	}{
 		baseData:   baseData{Title: "首页", Page: "home"},
 		Clusters:   clusters,
+		Storages:   storages,
 		SkillCount: len(skills),
 		LLMEnabled: s.llmState.LLMEnabled(),
 	})
@@ -315,4 +320,179 @@ func indexByte(s string, b byte) int {
 		}
 	}
 	return -1
+}
+
+// handleStorageRoutes dispatches /storages/<name>, /storages/<name>/info,
+// /storages/<name>/health, /storages/<name>/quotas, /storages/<name>/user (POST).
+func (s *Server) handleStorageRoutes(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Path[len("/storages/"):]
+	var name, action string
+	if i := indexByte(path, '/'); i < 0 {
+		name = path
+	} else {
+		name, action = path[:i], path[i+1:]
+	}
+	if name == "" {
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
+
+	summary, ok := s.handler.GetRESTStorage(name)
+	if !ok {
+		http.Error(w, "storage not found: "+name, http.StatusNotFound)
+		return
+	}
+
+	switch action {
+	case "":
+		s.render(w, "storage.html", struct {
+			baseData
+			Storage  bot.RESTStorageSummary
+			ShowForm bool
+			User     string
+			Scope    string
+			Path     string
+			Executed bool
+			Output   string
+			Error    string
+		}{
+			baseData: baseData{Title: name, Page: "home"},
+			Storage:  summary,
+		})
+	case "info":
+		s.renderStorageOutput(w, r, summary, "集群信息", func(ctx context.Context) (string, error) {
+			return s.handler.GetStorageInfo(ctx, name)
+		})
+	case "health":
+		s.renderStorageOutput(w, r, summary, "健康检查", func(ctx context.Context) (string, error) {
+			return s.handler.GetStorageHealth(ctx, name)
+		})
+	case "quotas":
+		s.renderStorageOutput(w, r, summary, "配额列表", func(ctx context.Context) (string, error) {
+			return s.handler.GetStorageQuotas(ctx, name)
+		})
+	case "user":
+		s.renderStorageUser(w, r, summary)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func (s *Server) renderStorageOutput(w http.ResponseWriter, r *http.Request, summary bot.RESTStorageSummary, label string, run func(ctx context.Context) (string, error)) {
+	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+	defer cancel()
+	output, err := run(ctx)
+	data := struct {
+		baseData
+		Storage bot.RESTStorageSummary
+		Label   string
+		Output  string
+		Error   string
+		BackURL string
+	}{
+		baseData: baseData{Title: summary.Name + " — " + label, Page: "home"},
+		Storage:  summary,
+		Label:    label,
+		Output:   output,
+		BackURL:  "/storages/" + summary.Name,
+	}
+	if err != nil {
+		data.Error = err.Error()
+	}
+	s.render(w, "storage_output.html", data)
+}
+
+func (s *Server) renderStorageUser(w http.ResponseWriter, r *http.Request, summary bot.RESTStorageSummary) {
+	data := struct {
+		baseData
+		Storage      bot.RESTStorageSummary
+		User         string
+		Scope        string
+		Path         string
+		Executed     bool
+		Output       string
+		Error        string
+		BackURL      string
+	}{
+		baseData: baseData{Title: summary.Name + " — 用户目录", Page: "home"},
+		Storage:  summary,
+		Scope:    "private",
+		BackURL:  "/storages/" + summary.Name,
+	}
+
+	if r.Method == http.MethodPost {
+		if err := r.ParseForm(); err != nil {
+			data.Error = "parse form: " + err.Error()
+			s.render(w, "storage_output.html", outputData(summary, "用户目录", "", data.Error))
+			return
+		}
+		data.User = strings.TrimSpace(r.PostForm.Get("user"))
+		if sc := r.PostForm.Get("scope"); sc != "" {
+			data.Scope = sc
+		}
+		data.Path = strings.TrimSpace(r.PostForm.Get("path"))
+
+		if data.User == "" && data.Path == "" {
+			data.Error = "请填写 user 或 path 之一"
+		} else {
+			ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+			defer cancel()
+			var (
+				out string
+				err error
+			)
+			if data.Path != "" {
+				out, err = s.handler.GetStorageDirUsage(ctx, summary.Name, data.Path)
+			} else {
+				out, err = s.handler.GetStorageUserDir(ctx, summary.Name, data.User, data.Scope)
+			}
+			data.Executed = true
+			data.Output = out
+			if err != nil {
+				data.Error = err.Error()
+			}
+		}
+	}
+
+	s.render(w, "storage.html", struct {
+		baseData
+		Storage  bot.RESTStorageSummary
+		ShowForm bool
+		User     string
+		Scope    string
+		Path     string
+		Executed bool
+		Output   string
+		Error    string
+	}{
+		baseData: data.baseData,
+		Storage:  summary,
+		ShowForm: true,
+		User:     data.User,
+		Scope:    data.Scope,
+		Path:     data.Path,
+		Executed: data.Executed,
+		Output:   data.Output,
+		Error:    data.Error,
+	})
+}
+
+// outputData builds the struct used by storage_output.html. Helper to keep
+// renderStorageUser short when it falls through to the simple output template.
+func outputData(summary bot.RESTStorageSummary, label, output, errMsg string) any {
+	return struct {
+		baseData
+		Storage bot.RESTStorageSummary
+		Label   string
+		Output  string
+		Error   string
+		BackURL string
+	}{
+		baseData: baseData{Title: summary.Name + " — " + label, Page: "home"},
+		Storage:  summary,
+		Label:    label,
+		Output:   output,
+		Error:    errMsg,
+		BackURL:  "/storages/" + summary.Name,
+	}
 }

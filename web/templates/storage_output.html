@@ -1,0 +1,15 @@
+{{define "storage_output-content"}}
+<div class="card">
+  <h2>{{.Storage.Name}} — {{.Label}}</h2>
+  {{if .Error}}
+  <div class="err-msg">{{.Error}}</div>
+  {{else}}
+  <pre>{{.Output}}</pre>
+  {{end}}
+  <p style="margin-top:14px">
+    <a href="">↻ 刷新</a> &nbsp;·&nbsp;
+    <a href="{{.BackURL}}">← 返回存储概览</a>
+  </p>
+</div>
+{{end}}
+{{define "content"}}{{template "storage_output-content" .}}{{end}}

@@ -1,0 +1,44 @@
+{{define "storage-content"}}
+<div class="card">
+  <h2>{{.Storage.Name}} — 概览</h2>
+  <table>
+    <tr><th style="width:160px">类型</th><td><span class="badge ok">{{.Storage.Type}}</span></td></tr>
+    <tr><th>Base URL</th><td><code>{{.Storage.BaseURL}}</code></td></tr>
+    <tr><th>Private 用户前缀</th><td>{{if .Storage.PrivateUserPrefix}}<code>{{.Storage.PrivateUserPrefix}}</code>{{else}}<span class="muted">未配置</span>{{end}}</td></tr>
+    <tr><th>Public 用户前缀</th><td>{{if .Storage.PublicUserPrefix}}<code>{{.Storage.PublicUserPrefix}}</code>{{else}}<span class="muted">未配置</span>{{end}}</td></tr>
+  </table>
+  <p style="margin-top:14px">
+    <a href="/storages/{{.Storage.Name}}/info">集群信息 →</a> &nbsp;·&nbsp;
+    <a href="/storages/{{.Storage.Name}}/health">健康检查 →</a> &nbsp;·&nbsp;
+    <a href="/storages/{{.Storage.Name}}/quotas">配额列表 →</a> &nbsp;·&nbsp;
+    <a href="/storages/{{.Storage.Name}}/user">用户/路径查询 →</a>
+  </p>
+</div>
+
+{{if .ShowForm}}
+<div class="card">
+  <h2>用户 / 路径查询</h2>
+  {{if .Error}}<div class="err-msg">{{.Error}}</div>{{end}}
+  <form method="post" action="/storages/{{.Storage.Name}}/user">
+    <div><label>用户名（短名，按前缀拼接）</label>
+      <input type="text" name="user" value="{{.User}}" placeholder="liangzheng"></div>
+    <div><label>Scope</label>
+      <select name="scope">
+        <option value="private" {{if eq .Scope "private"}}selected{{end}}>private</option>
+        <option value="public" {{if eq .Scope "public"}}selected{{end}}>public</option>
+      </select>
+    </div>
+    <div><label>或精确路径</label>
+      <input type="text" name="path" value="{{.Path}}" placeholder="/drtraining/user/liangzheng"></div>
+    <div><button type="submit">查询</button></div>
+  </form>
+  <p class="muted" style="margin-top:10px">填 user 时会用 {scope}_user_prefix 自动拼接路径；填 path 时优先用 path 精确查找。</p>
+
+  {{if .Executed}}
+  <h2 style="margin-top:18px">结果</h2>
+  <pre>{{.Output}}</pre>
+  {{end}}
+</div>
+{{end}}
+{{end}}
+{{define "content"}}{{template "storage-content" .}}{{end}}

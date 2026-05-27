@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"sort"
+
+	"github.com/microyahoo/storage-bot/storage"
 )
 
 // ClusterSummary describes a cluster for the web UI.
@@ -25,6 +27,107 @@ type NodeInfo struct {
 type SkillInfo struct {
 	Name        string
 	Description string
+}
+
+// RESTStorageSummary describes a Yanrong (yrfs) storage for the web UI.
+type RESTStorageSummary struct {
+	Name              string
+	Type              string
+	BaseURL           string
+	PublicUserPrefix  string
+	PrivateUserPrefix string
+}
+
+// ListRESTStorageSummaries returns sorted REST storage metadata for the web UI.
+func (h *Handler) ListRESTStorageSummaries() []RESTStorageSummary {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	out := make([]RESTStorageSummary, 0, len(h.restStorages))
+	for name, sk := range h.restStorages {
+		s := RESTStorageSummary{Name: name}
+		if meta, ok := sk.Metadata(); ok {
+			s.Type = meta.Type
+			s.BaseURL = meta.BaseURL
+			s.PublicUserPrefix = meta.PublicUserPrefix
+			s.PrivateUserPrefix = meta.PrivateUserPrefix
+		}
+		out = append(out, s)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// GetRESTStorage looks up a single storage summary by name (case-sensitive).
+func (h *Handler) GetRESTStorage(name string) (RESTStorageSummary, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	sk, ok := h.restStorages[name]
+	if !ok {
+		return RESTStorageSummary{}, false
+	}
+	s := RESTStorageSummary{Name: name}
+	if meta, ok2 := sk.Metadata(); ok2 {
+		s.Type = meta.Type
+		s.BaseURL = meta.BaseURL
+		s.PublicUserPrefix = meta.PublicUserPrefix
+		s.PrivateUserPrefix = meta.PrivateUserPrefix
+	}
+	return s, true
+}
+
+// restSkill returns the RESTSkill for the named storage, or an error if missing.
+func (h *Handler) restSkill(name string) (*storage.RESTSkill, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	sk, ok := h.restStorages[name]
+	if !ok {
+		return nil, fmt.Errorf("storage %q not found", name)
+	}
+	return sk, nil
+}
+
+// GetStorageInfo / GetStorageHealth / GetStorageQuotas / GetStorageUserDir are
+// thin web-facing wrappers around RESTSkill so the web handler doesn't import
+// the storage package.
+func (h *Handler) GetStorageInfo(ctx context.Context, name string) (string, error) {
+	sk, err := h.restSkill(name)
+	if err != nil {
+		return "", err
+	}
+	return sk.ClusterInfo(ctx)
+}
+
+func (h *Handler) GetStorageHealth(ctx context.Context, name string) (string, error) {
+	sk, err := h.restSkill(name)
+	if err != nil {
+		return "", err
+	}
+	return sk.HealthCheck(ctx)
+}
+
+func (h *Handler) GetStorageQuotas(ctx context.Context, name string) (string, error) {
+	sk, err := h.restSkill(name)
+	if err != nil {
+		return "", err
+	}
+	return sk.ListQuotas(ctx)
+}
+
+func (h *Handler) GetStorageUserDir(ctx context.Context, name, user, scope string) (string, error) {
+	sk, err := h.restSkill(name)
+	if err != nil {
+		return "", err
+	}
+	return sk.DirUsageForUser(ctx, user, scope)
+}
+
+func (h *Handler) GetStorageDirUsage(ctx context.Context, name, path string) (string, error) {
+	sk, err := h.restSkill(name)
+	if err != nil {
+		return "", err
+	}
+	return sk.DirUsage(ctx, path)
 }
 
 // ListClusters returns a sorted summary of every configured cluster.

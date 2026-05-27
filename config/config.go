@@ -74,7 +74,7 @@ type SSHNode struct {
 // REST API. Auth is via username/password (twice-MD5 hashed by the backend).
 //
 // PublicUserPrefix / PrivateUserPrefix let skills resolve a short user name
-// (e.g. "aoke") into a full quota path (e.g. "/drtraining/user/aoke") without
+// (e.g. "liangzheng") into a full quota path (e.g. "/drtraining/user/liangzheng") without
 // the operator having to type the prefix every time. Leave empty to disable.
 type RESTStorageConfig struct {
 	BaseURL  string `yaml:"base_url"`

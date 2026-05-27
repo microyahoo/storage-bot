@@ -1,12 +1,13 @@
 {{define "home-content"}}
 <div class="stat-row">
-  <div class="stat"><div class="label">集群总数</div><div class="value">{{len .Clusters}}</div></div>
+  <div class="stat"><div class="label">Ceph 集群</div><div class="value">{{len .Clusters}}</div></div>
+  <div class="stat"><div class="label">焱融存储</div><div class="value">{{len .Storages}}</div></div>
   <div class="stat"><div class="label">Skills</div><div class="value">{{.SkillCount}}</div></div>
   <div class="stat"><div class="label">LLM 状态</div><div class="value">{{if .LLMEnabled}}<span class="badge ok">已开启</span>{{else}}<span class="badge warn">已关闭</span>{{end}}</div></div>
 </div>
 
 <div class="card">
-  <h2>集群列表</h2>
+  <h2>Ceph 集群</h2>
   {{if .Clusters}}
   <table>
     <thead><tr><th>名称</th><th>Namespace</th><th>Gateway</th><th>操作</th></tr></thead>
@@ -25,7 +26,36 @@
     </tbody>
   </table>
   {{else}}
-  <div class="empty">未配置任何集群</div>
+  <div class="empty">未配置任何 Ceph 集群</div>
+  {{end}}
+</div>
+
+<div class="card">
+  <h2>焱融(yrfs) 存储</h2>
+  {{if .Storages}}
+  <table>
+    <thead><tr><th>名称</th><th>类型</th><th>Base URL</th><th>Private Prefix</th><th>Public Prefix</th><th>操作</th></tr></thead>
+    <tbody>
+    {{range .Storages}}
+      <tr>
+        <td><a href="/storages/{{.Name}}">{{.Name}}</a></td>
+        <td><span class="badge ok">{{.Type}}</span></td>
+        <td>{{.BaseURL}}</td>
+        <td>{{if .PrivateUserPrefix}}<code>{{.PrivateUserPrefix}}</code>{{else}}<span class="muted">-</span>{{end}}</td>
+        <td>{{if .PublicUserPrefix}}<code>{{.PublicUserPrefix}}</code>{{else}}<span class="muted">-</span>{{end}}</td>
+        <td>
+          <a href="/storages/{{.Name}}/info">信息</a> ·
+          <a href="/storages/{{.Name}}/health">健康</a> ·
+          <a href="/storages/{{.Name}}/quotas">配额</a> ·
+          <a href="/storages/{{.Name}}/user">用户</a>
+        </td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  <div class="muted" style="margin-top:10px;">飞书消息示例：<code>@bot {{(index .Storages 0).Name}} quotas</code> · <code>@bot {{(index .Storages 0).Name}} user liangzheng private</code></div>
+  {{else}}
+  <div class="empty">未配置任何焱融存储</div>
   {{end}}
 </div>
 {{end}}

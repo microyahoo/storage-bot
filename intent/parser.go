@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -132,9 +133,12 @@ func ParseWithAll(message string, knownClusters []string, knownSkills []string, 
 		}
 	}
 
-	// Check skill names passed in from registry (exact name match)
-	for _, sk := range knownSkills {
-		if strings.Contains(lower, strings.ToLower(sk)) {
+	// Check skill names passed in from registry (whole-word match, longest first
+	// so "pg_status" beats "pg" when both are registered).
+	skills := append([]string(nil), knownSkills...)
+	sort.Slice(skills, func(i, j int) bool { return len(skills[i]) > len(skills[j]) })
+	for _, sk := range skills {
+		if containsWord(lower, strings.ToLower(sk)) {
 			action.Type = ActionSkill
 			action.SkillName = sk
 			action.ClusterName, action.ExcludeClusters = extractClusterTarget(lower, knownClusters)
@@ -160,9 +164,12 @@ func ParseWithAll(message string, knownClusters []string, knownSkills []string, 
 		return action
 	}
 
-	// Check for REST storage invocation (matched by name)
-	for _, storageName := range knownRESTStorages {
-		if strings.Contains(lower, strings.ToLower(storageName)) {
+	// Check for REST storage invocation (matched by name as a whole word).
+	// Sort by length desc so "yrfs01-sz" beats "yrfs01" when both are configured.
+	rest := append([]string(nil), knownRESTStorages...)
+	sort.Slice(rest, func(i, j int) bool { return len(rest[i]) > len(rest[j]) })
+	for _, storageName := range rest {
+		if containsWord(lower, strings.ToLower(storageName)) {
 			action.Type = ActionRESTStorage
 			action.StorageName = storageName
 			action.RawMessage = msg
@@ -254,8 +261,13 @@ func NeedsFallback(action Action) bool {
 }
 
 func extractClusterName(lower string, knownClusters []string) string {
-	for _, name := range knownClusters {
-		if strings.Contains(lower, strings.ToLower(name)) {
+	// Whole-word match, longest first so "cdn-01-test" beats "cdn-01" when both
+	// are configured. Without this, "cdn-01" matches "cdn-01-test capacity"
+	// because strings.Contains is substring-based.
+	names := append([]string(nil), knownClusters...)
+	sort.Slice(names, func(i, j int) bool { return len(names[i]) > len(names[j]) })
+	for _, name := range names {
+		if containsWord(lower, strings.ToLower(name)) {
 			return name
 		}
 	}
@@ -357,6 +369,38 @@ func extractNodeName(lower string, knownClusters []string) string {
 func stripMention(msg string) string {
 	re := regexp.MustCompile(`@_user_\d+\s*`)
 	return strings.TrimSpace(re.ReplaceAllString(msg, ""))
+}
+
+// containsWord reports whether `name` appears in `s` bounded by non-identifier
+// characters on both sides. This prevents "yrfs01" from matching when the user
+// actually typed "yrfs01-sz". Identifier characters are [A-Za-z0-9_-.].
+func containsWord(s, name string) bool {
+	if name == "" {
+		return false
+	}
+	i := 0
+	for {
+		j := strings.Index(s[i:], name)
+		if j < 0 {
+			return false
+		}
+		start := i + j
+		end := start + len(name)
+		if (start == 0 || !isNameChar(s[start-1])) && (end == len(s) || !isNameChar(s[end])) {
+			return true
+		}
+		i = start + 1
+	}
+}
+
+func isNameChar(b byte) bool {
+	switch {
+	case b >= 'a' && b <= 'z', b >= 'A' && b <= 'Z', b >= '0' && b <= '9':
+		return true
+	case b == '-', b == '_', b == '.':
+		return true
+	}
+	return false
 }
 
 func isNumeric(s string) bool {

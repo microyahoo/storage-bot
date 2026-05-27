@@ -194,20 +194,20 @@ yrfs01 health
 
 # 配额
 yrfs01 quotas                              # 全部配额列表
-yrfs01 usage /drtraining/user/aoke         # 精确路径
+yrfs01 usage /drtraining/user/liangzheng   # 精确路径
 
 # 用户目录（用配置里的 private_user_prefix / public_user_prefix 拼接）
-yrfs01 user aoke              # 默认 private
-yrfs01 user aoke public
-yrfs01 用户 aoke 公共
+yrfs01 user liangzheng              # 默认 private
+yrfs01 user liangzheng public
+yrfs01 用户 liangzheng 公共
 ```
 
 也可以用 `yrfsctl` CLI 在终端直接调试，无需走飞书：
 
 ```bash
 yrfsctl --config ./config.yaml --name yrfs01 info
-yrfsctl --name yrfs01 quota --path /drtraining/user/aoke
-yrfsctl --name yrfs01 quota --user aoke --scope private
+yrfsctl --name yrfs01 quota --path /drtraining/user/liangzheng
+yrfsctl --name yrfs01 quota --user liangzheng --scope private
 yrfsctl --base-url https://10.0.0.5 --username admin --password 'pw' health
 ```
 
@@ -260,7 +260,7 @@ rest_storages:
     base_url: "https://10.0.100.5"     # Yanrong 管理面入口
     username: "admin"
     password: "xxxx"
-    # 用户目录前缀，可选；用于将 `yrfs01 user aoke` 自动展开成完整路径
+    # 用户目录前缀，可选；用于将 `yrfs01 user liangzheng` 自动展开成完整路径
     public_user_prefix:  "/public-data/user"
     private_user_prefix: "/drtraining/user"
 
@@ -317,7 +317,7 @@ kill -HUP $(pgrep storage-bot)
 kubectl -n storage-bot exec deploy/storage-bot -- kill -HUP 1
 ```
 
-热重载仅更新集群列表和 SSH 节点配置，LLM / 飞书等启动时参数不会变更。
+热重载更新集群列表、SSH 节点配置以及 `rest_storages`（Yanrong）配置；LLM / 飞书等启动时参数不会变更。
 
 ## 多集群 kubeconfig 生成
 
