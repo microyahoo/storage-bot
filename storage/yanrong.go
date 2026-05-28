@@ -139,6 +139,16 @@ func (y *YanrongBackend) overviewSummary(ctx context.Context) (string, error) {
 	return summary, nil
 }
 
+// ListRecycles paginates through /api/v3/recycles and returns a pretty-printed
+// summary of every recycle-bin entry in the cluster.
+func (y *YanrongBackend) ListRecycles(ctx context.Context) (string, error) {
+	recycles, err := y.listAllRecycles(ctx)
+	if err != nil {
+		return "", err
+	}
+	return formatRecycles(recycles), nil
+}
+
 // ListQuotas paginates through /api/v3/quotas and returns a pretty-printed
 // summary of every quota entry in the cluster.
 func (y *YanrongBackend) ListQuotas(ctx context.Context) (string, error) {
@@ -227,6 +237,75 @@ type quotaEntry struct {
 	OpStatus   string `json:"op_status"`
 	Recursive  bool   `json:"recursive"`
 	EntryID    string `json:"entry_id"`
+}
+
+// listAllRecycles paginates /api/v3/recycles. Same shape as listAllQuotas
+// (data.recycles[] + pagination); kept separate so each can evolve independently.
+func (y *YanrongBackend) listAllRecycles(ctx context.Context) ([]recycleEntry, error) {
+	const perPage = 100
+	page := 1
+	var all []recycleEntry
+	for {
+		q := url.Values{
+			"page":      {strconv.Itoa(page)},
+			"page_size": {strconv.Itoa(perPage)},
+			"lang":      {"zh"},
+		}
+		raw, err := y.authedGet(ctx, "/api/v2/recycle", q)
+		if err != nil {
+			return nil, fmt.Errorf("list recycles page %d: %w", page, err)
+		}
+		var resp struct {
+			Data struct {
+				Recycles   []recycleEntry `json:"recycles"`
+				Pagination struct {
+					Total        int `json:"total"`
+					CurrentPage  int `json:"current_page"`
+					PerPageCount int `json:"per_page_count"`
+				} `json:"pagination"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal([]byte(raw), &resp); err != nil {
+			return nil, fmt.Errorf("parse recycles page %d: %w", page, err)
+		}
+		all = append(all, resp.Data.Recycles...)
+
+		if resp.Data.Pagination.Total == 0 || len(all) >= resp.Data.Pagination.Total {
+			break
+		}
+		if len(resp.Data.Recycles) == 0 {
+			break // defensive
+		}
+		page++
+	}
+	return all, nil
+}
+
+// recycleEntry mirrors the fields in /api/v3/recycles (see examples/recycles.json).
+// `expiration` is days; `usage` is a server-rendered "files/size" string we pass
+// through verbatim since the server already formats it.
+type recycleEntry struct {
+	ID         int64  `json:"id"`
+	Path       string `json:"path"`
+	Expiration int    `json:"expiration"`
+	Status     string `json:"status"`
+	Usage      string `json:"usage"`
+}
+
+func formatRecycles(recycles []recycleEntry) string {
+	if len(recycles) == 0 {
+		return "🚫 (no recycles)"
+	}
+	sort.Slice(recycles, func(i, j int) bool { return recycles[i].Path < recycles[j].Path })
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "🗑  Recycles (%d total)\n", len(recycles))
+	fmt.Fprintf(&b, "%-6s %-40s %-8s %-10s %s\n", "ID", "PATH", "EXPIRE", "STATUS", "USAGE")
+	for _, r := range recycles {
+		fmt.Fprintf(&b, "%-6d %-40s %-8s %-10s %s\n",
+			r.ID, truncate(r.Path, 40), fmt.Sprintf("%dd", r.Expiration), r.Status, r.Usage)
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 func normalizeQuotaPath(p string) string {

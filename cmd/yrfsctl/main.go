@@ -66,6 +66,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(
 		newInfoCmd(),
 		newQuotaCmd(),
+		newRecyclesCmd(),
 	)
 	return root
 }
@@ -130,6 +131,27 @@ func newQuotaCmd() *cobra.Command {
 	cmd.Flags().StringVar(&user, "user", "", "user name, eg. liangzheng; resolved via configured user prefix")
 	cmd.Flags().StringVar(&scope, "scope", "private", "user-prefix scope when --user is set: public or private")
 	return cmd
+}
+
+func newRecyclesCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "recycles",
+		Short: "GET /api/v2/recycle — list recycle-bin entries",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			b, ctx, cancel, err := setup()
+			if err != nil {
+				return err
+			}
+			defer cancel()
+			out, err := b.ListRecycles(ctx)
+			if err != nil {
+				return err
+			}
+			fmt.Println(out)
+			return nil
+		},
+	}
 }
 
 // setup resolves credentials and returns a backend + cancellable context.

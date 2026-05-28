@@ -1,0 +1,1 @@
+{"code":"0","data":{"recycles":[{"id":1,"path":"/test/recycle1","expiration":7,"status":"active","usage":"0/0.00B"},{"id":2,"path":"/test/recycle2","expiration":30,"status":"active","usage":"0/0.00B"}],"pagination":{"total":2,"current_page":1,"per_page_count":10}},"msg":""}
