@@ -134,17 +134,30 @@ func newQuotaCmd() *cobra.Command {
 }
 
 func newRecyclesCmd() *cobra.Command {
-	return &cobra.Command{
+	var (
+		filePath string
+		size     int
+	)
+	cmd := &cobra.Command{
 		Use:   "recycles",
-		Short: "GET /api/v2/recycle — list recycle-bin entries",
-		Args:  cobra.NoArgs,
+		Short: "list recycle bins, or files inside one (--path picks the recycle by longest prefix)",
+		Long: `Without --path: GET /api/v3/recycles — list every recycle bin.
+With --path:    GET /api/v2/recycle/file — list deleted files under <path>.
+                The recycle bin is auto-selected by longest path prefix; e.g.
+                a query under /a/b/c with recycles /a and /a/b picks /a/b.`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			b, ctx, cancel, err := setup()
 			if err != nil {
 				return err
 			}
 			defer cancel()
-			out, err := b.ListRecycles(ctx)
+			var out string
+			if filePath != "" {
+				out, err = b.ListRecycleFiles(ctx, filePath, size)
+			} else {
+				out, err = b.ListRecycles(ctx)
+			}
 			if err != nil {
 				return err
 			}
@@ -152,6 +165,9 @@ func newRecyclesCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&filePath, "path", "", "if set, list deleted files under this path (recycle bin chosen by longest prefix)")
+	cmd.Flags().IntVar(&size, "size", 100, "page size for --path (max rows returned)")
+	return cmd
 }
 
 // setup resolves credentials and returns a backend + cancellable context.

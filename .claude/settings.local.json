@@ -14,7 +14,10 @@
       "Bash(go test *)",
       "Bash(go run *)",
       "Bash(go doc *)",
-      "Bash(go get *)"
+      "Bash(go get *)",
+      "Bash(rm -rf /tmp/rftest)",
+      "Bash(rm -rf /tmp/nrm)",
+      "Bash(rm -rf /tmp/hp)"
     ]
   }
 }

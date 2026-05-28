@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -70,7 +71,7 @@ func NewYanrongBackend(name, baseURL, username, password string, opts ...Yanrong
 		baseURL:  strings.TrimRight(baseURL, "/"),
 		username: username,
 		password: password,
-		client:   &http.Client{Timeout: 30 * time.Second, Transport: tr},
+		client:   &http.Client{Timeout: 60 * time.Second, Transport: tr},
 	}
 	for _, opt := range opts {
 		opt(y)
@@ -147,6 +148,135 @@ func (y *YanrongBackend) ListRecycles(ctx context.Context) (string, error) {
 		return "", err
 	}
 	return formatRecycles(recycles), nil
+}
+
+// ListRecycleFiles lists deleted files under `path` from the matching recycle
+// bin. A file is matched to the recycle with the longest path prefix that
+// contains it — e.g. for recycles "/public-data/user" and "/public-data/user/alice",
+// a query under "/public-data/user/alice/x" picks the latter.
+//
+// size caps the number of rows returned by the server in a single call. The
+// /api/v2/recycle/file endpoint does NOT support page iteration, so the result
+// is partial.
+func (y *YanrongBackend) ListRecycleFiles(ctx context.Context, queryPath string, size int) (string, error) {
+	if strings.TrimSpace(queryPath) == "" {
+		return "", fmt.Errorf("path is required")
+	}
+	if size <= 0 {
+		size = 100
+	}
+	cleaned := normalizeQuotaPath(queryPath)
+
+	recycles, err := y.listAllRecycles(ctx)
+	if err != nil {
+		return "", err
+	}
+	match, ok := pickRecycleForPath(recycles, cleaned)
+	if !ok {
+		return "", fmt.Errorf("no recycle bin covers path %q (scanned %d entries)", queryPath, len(recycles))
+	}
+
+	// The API requires a trailing "/" on the `path` query value to be treated
+	// as a directory listing. Add it only in the url.Values — leave the
+	// caller's queryPath untouched.
+	apiPath := queryPath
+	if !strings.HasSuffix(apiPath, "/") {
+		apiPath += "/"
+	}
+	q := url.Values{
+		"recycle_id": {strconv.FormatInt(match.ID, 10)},
+		"size":       {strconv.Itoa(size)},
+		"path":       {apiPath},
+		"list_mode":  {"LAST_PAGE"}, // FIXME: only list last page
+	}
+	raw, err := y.authedGet(ctx, "/api/v2/recycle/file", q)
+	if err != nil {
+		return "", fmt.Errorf("list recycle files: %w", err)
+	}
+	var resp struct {
+		Data struct {
+			RecycleID    int64              `json:"recycle_id"`
+			RecycleFiles []recycleFileEntry `json:"recycle_files"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(raw), &resp); err != nil {
+		return "", fmt.Errorf("parse recycle files: %w", err)
+	}
+	return formatRecycleFiles(match, resp.Data.RecycleFiles), nil
+}
+
+// pickRecycleForPath returns the recycle whose Path is the longest prefix of
+// queryPath. Comparison is done on path components so "/a/b" does NOT match
+// "/a/bc"; the longest-prefix rule resolves nested recycles correctly.
+func pickRecycleForPath(recycles []recycleEntry, queryPath string) (recycleEntry, bool) {
+	q := normalizeQuotaPath(queryPath)
+	var best recycleEntry
+	bestLen := -1
+	for _, r := range recycles {
+		rp := normalizeQuotaPath(r.Path)
+		if !pathHasPrefix(q, rp) {
+			continue
+		}
+		if len(rp) > bestLen {
+			best = r
+			bestLen = len(rp)
+		}
+	}
+	return best, bestLen >= 0
+}
+
+// pathHasPrefix reports whether `p` equals `prefix` or lives beneath it,
+// matching on path components (so "/a/b" does NOT match "/a/bc"). Both inputs
+// are run through normalizeQuotaPath here so callers can pass raw API or
+// user-supplied strings — `..`, `//`, missing leading slash, etc. are all
+// canonicalized before comparison. "/" is a universal prefix.
+//
+// We use filepath.Rel instead of a string-prefix check because Rel handles
+// component boundaries by construction: if `p` is outside `prefix`, the
+// returned relative path is exactly ".." or starts with "../".
+func pathHasPrefix(p, prefix string) bool {
+	p = normalizeQuotaPath(p)
+	prefix = normalizeQuotaPath(prefix)
+	rel, err := filepath.Rel(prefix, p)
+	if err != nil {
+		return false
+	}
+	sep := string(filepath.Separator)
+	return rel != ".." && !strings.HasPrefix(rel, ".."+sep)
+}
+
+// recycleFileEntry mirrors data.recycle_files[] in /api/v2/recycle/file.
+// `size` is a server-rendered "314.00B" string; directories return "".
+type recycleFileEntry struct {
+	Path         string `json:"path"`
+	EID          string `json:"eid"`
+	Key          string `json:"key"`
+	Size         string `json:"size"`
+	Expiration   string `json:"expiration"`
+	RecycledTime string `json:"recycled_time"`
+	OwnerMDSID   int64  `json:"owner_mds_id"`
+}
+
+// formatRecycleFiles renders a recycle-bin file listing.
+func formatRecycleFiles(r recycleEntry, files []recycleFileEntry) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "🗑 Recycle #%d  path=%s  (matched %d files)\n", r.ID, r.Path, len(files))
+	if len(files) == 0 {
+		b.WriteString("🚫 (no files)")
+		return b.String()
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
+	fmt.Fprintf(&b, "\n⚠ server 端不支持分页，结果可能不完整\n")
+	fmt.Fprintf(&b, "%-50s %15s %-20s %-20s %-20s %s\n", "PATH", "SIZE", "RECYCLED", "EXPIRES", "EID", "MDS-ID")
+	for _, f := range files {
+		size := f.Size
+		if size == "" {
+			size = "-"
+		}
+		fmt.Fprintf(&b, "%-50s %15s %-20s %-20s %-20s %d\n",
+			truncate(f.Path, 50), size, f.RecycledTime, f.Expiration, f.EID, f.OwnerMDSID)
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // ListQuotas paginates through /api/v3/quotas and returns a pretty-printed
@@ -302,12 +432,24 @@ func formatRecycles(recycles []recycleEntry) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
+// normalizeQuotaPath canonicalizes a user-supplied path for prefix matching
+// and quota lookups: trims whitespace, collapses `//`, resolves `.` / `..`,
+// strips any trailing slash, and rebases relative inputs to "/" so an input
+// like "foo//bar/.." round-trips to "/foo". Uses path.Clean (not filepath)
+// because Yanrong paths are always forward-slash and OS-independent.
 func normalizeQuotaPath(p string) string {
 	p = strings.TrimSpace(p)
-	if p == "" || p == "/" {
+	if p == "" {
 		return "/"
 	}
-	return strings.TrimRight(p, "/")
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	cleaned := path.Clean(p)
+	if cleaned == "." {
+		return "/"
+	}
+	return cleaned
 }
 
 func formatQuotaEntry(q quotaEntry) string {
