@@ -181,48 +181,14 @@ func (y *YanrongBackend) DirUsage(ctx context.Context, path string) (string, err
 	return "", fmt.Errorf("no quota found for path %q (scanned %d entries)", path, len(quotas))
 }
 
-// listAllQuotas paginates /api/v3/quotas until pagination.total entries have
-// been collected. Pages are pulled in order; we don't try to parallelize since
-// the API returns the total count up front and 100/page keeps it cheap.
+// listAllQuotas paginates /api/v3/quotas. See listPaginated for the loop body —
+// quotas differ only in the endpoint path and the JSON list-field name ("list").
 func (y *YanrongBackend) listAllQuotas(ctx context.Context) ([]quotaEntry, error) {
-	const perPage = 100
-	page := 1
-	var all []quotaEntry
-	for {
-		q := url.Values{
-			"page":      {strconv.Itoa(page)},
-			"page_size": {strconv.Itoa(perPage)},
-			"lang":      {"zh"},
-		}
-		raw, err := y.authedGet(ctx, "/api/v3/quotas", q)
-		if err != nil {
-			return nil, fmt.Errorf("list quotas page %d: %w", page, err)
-		}
-		var resp struct {
-			Data struct {
-				List       []quotaEntry `json:"list"`
-				Pagination struct {
-					Total        int `json:"total"`
-					CurrentPage  int `json:"current_page"`
-					PerPageCount int `json:"per_page_count"`
-				} `json:"pagination"`
-			} `json:"data"`
-		}
-		if err := json.Unmarshal([]byte(raw), &resp); err != nil {
-			return nil, fmt.Errorf("parse quotas page %d: %w", page, err)
-		}
-		all = append(all, resp.Data.List...)
-
-		// Stop conditions: server returned fewer than asked, or we've reached the total.
-		if resp.Data.Pagination.Total == 0 || len(all) >= resp.Data.Pagination.Total {
-			break
-		}
-		if len(resp.Data.List) == 0 {
-			break // defensive: avoid infinite loop if the server lies about total
-		}
-		page++
-	}
-	return all, nil
+	return listPaginated[quotaEntry](ctx, y, pageSpec{
+		endpoint: "/api/v3/quotas",
+		listKey:  "list",
+		label:    "quotas",
+	})
 }
 
 type quotaEntry struct {
@@ -239,42 +205,70 @@ type quotaEntry struct {
 	EntryID    string `json:"entry_id"`
 }
 
-// listAllRecycles paginates /api/v3/recycles. Same shape as listAllQuotas
-// (data.recycles[] + pagination); kept separate so each can evolve independently.
+// listAllRecycles paginates /api/v2/recycle. See listPaginated.
 func (y *YanrongBackend) listAllRecycles(ctx context.Context) ([]recycleEntry, error) {
+	return listPaginated[recycleEntry](ctx, y, pageSpec{
+		endpoint: "/api/v2/recycle",
+		listKey:  "recycles",
+		label:    "recycles",
+	})
+}
+
+// pageSpec describes a single paginated Yanrong list endpoint: where to GET,
+// which JSON key inside data.* holds the slice, and a short label for errors.
+type pageSpec struct {
+	endpoint string // e.g. "/api/v3/quotas"
+	listKey  string // JSON field name inside `data`, e.g. "list" or "recycles"
+	label    string // human label for error messages, e.g. "quotas"
+}
+
+// listPaginated walks `page=1,2,...` until pagination.total entries have been
+// collected. The shape `data.{listKey}` + `data.pagination` is consistent across
+// Yanrong list endpoints; only the list key differs (e.g. "list" vs "recycles").
+// We decode `data` as a raw map so the same loop works for any T.
+func listPaginated[T any](ctx context.Context, y *YanrongBackend, spec pageSpec) ([]T, error) {
 	const perPage = 100
 	page := 1
-	var all []recycleEntry
+	var all []T
 	for {
 		q := url.Values{
 			"page":      {strconv.Itoa(page)},
 			"page_size": {strconv.Itoa(perPage)},
 			"lang":      {"zh"},
 		}
-		raw, err := y.authedGet(ctx, "/api/v2/recycle", q)
+		raw, err := y.authedGet(ctx, spec.endpoint, q)
 		if err != nil {
-			return nil, fmt.Errorf("list recycles page %d: %w", page, err)
+			return nil, fmt.Errorf("list %s page %d: %w", spec.label, page, err)
 		}
-		var resp struct {
-			Data struct {
-				Recycles   []recycleEntry `json:"recycles"`
-				Pagination struct {
-					Total        int `json:"total"`
-					CurrentPage  int `json:"current_page"`
-					PerPageCount int `json:"per_page_count"`
-				} `json:"pagination"`
-			} `json:"data"`
+		var env struct {
+			Data map[string]json.RawMessage `json:"data"`
 		}
-		if err := json.Unmarshal([]byte(raw), &resp); err != nil {
-			return nil, fmt.Errorf("parse recycles page %d: %w", page, err)
+		if err := json.Unmarshal([]byte(raw), &env); err != nil {
+			return nil, fmt.Errorf("parse %s page %d: %w", spec.label, page, err)
 		}
-		all = append(all, resp.Data.Recycles...)
+		rawList, ok := env.Data[spec.listKey]
+		if !ok {
+			return nil, fmt.Errorf("parse %s page %d: missing data.%s in response", spec.label, page, spec.listKey)
+		}
+		var batch []T
+		if err := json.Unmarshal(rawList, &batch); err != nil {
+			return nil, fmt.Errorf("parse %s page %d: decode list: %w", spec.label, page, err)
+		}
+		all = append(all, batch...)
 
-		if resp.Data.Pagination.Total == 0 || len(all) >= resp.Data.Pagination.Total {
+		var pag struct {
+			Total int `json:"total"`
+		}
+		if rawPag, ok := env.Data["pagination"]; ok {
+			_ = json.Unmarshal(rawPag, &pag)
+		}
+
+		// Stop conditions: server returned fewer than asked, or we've reached the total.
+		if pag.Total == 0 || len(all) >= pag.Total {
 			break
 		}
-		if len(resp.Data.Recycles) == 0 {
-			break // defensive
+		if len(batch) == 0 {
+			break // defensive: avoid infinite loop if the server lies about total
 		}
 		page++
 	}
@@ -349,7 +343,7 @@ func formatQuotas(quotas []quotaEntry) string {
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "📊 Quotas (%d total)\n", len(quotas))
-	fmt.Fprintf(&b, "%-50s %12s %12s %10s\n", "PATH", "USED", "LIMIT", "USED%")
+	fmt.Fprintf(&b, "%-65s %12s %12s %10s\n", "PATH", "USED", "LIMIT", "USED%")
 	for _, q := range quotas {
 		limit := "unlimited"
 		pct := "-"
@@ -357,8 +351,8 @@ func formatQuotas(quotas []quotaEntry) string {
 			limit = humanBytes(float64(q.SpaceLimit))
 			pct = fmt.Sprintf("%.1f%%", float64(q.SpaceUsed)/float64(q.SpaceLimit)*100)
 		}
-		fmt.Fprintf(&b, "%-50s %12s %12s %10s\n",
-			truncate(q.Path, 50), humanBytes(float64(q.SpaceUsed)), limit, pct)
+		fmt.Fprintf(&b, "%-65s %12s %12s %10s\n",
+			truncate(q.Path, 65), humanBytes(float64(q.SpaceUsed)), limit, pct)
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

@@ -1,0 +1,27 @@
+{
+  "code": "0",
+  "data": {
+    "recycle_id": 1,
+    "recycle_files": [
+      {
+        "path": "/test/recycle1/file1",
+        "eid": "20259649274CB",
+        "key": "P:1:/test/recycle1/file120259649274CB",
+        "size": "314.00B",
+        "expiration": "2023-06-28 11:57:02",
+        "recycled_time": "2023-06-21 11:57:02",
+        "owner_mds_id": 3
+      },
+      {
+        "path": "/test/recycle1/subdir/",
+        "eid": "10191649274CC",
+        "key": "P:1:/test/recycle1/subdir/file210191649274CC",
+        "size": "",
+        "expiration": "2023-06-28 11:56:56",
+        "recycled_time": "2023-06-21 11:56:56",
+        "owner_mds_id": 2
+      }
+    ]
+  },
+  "msg": ""
+}
