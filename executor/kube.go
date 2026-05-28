@@ -23,34 +23,45 @@ type KubeExecutor struct {
 	clientset  *kubernetes.Clientset
 	namespace  string
 	toolboxPod string
+
+	// build-time options consumed by NewKubeExecutor
+	serverOverride        string
+	insecureSkipTLSVerify bool
 }
 
-type KubeExecutorOptions struct {
-	KubeconfigPath        string
-	Namespace             string
-	ToolboxPodHint        string
-	ServerOverride        string
-	InsecureSkipTLSVerify bool
+type KubeOption func(*KubeExecutor)
+
+func WithNamespace(ns string) KubeOption {
+	return func(k *KubeExecutor) { k.namespace = ns }
 }
 
-func NewKubeExecutor(kubeconfigPath, namespace, toolboxPodHint string) (*KubeExecutor, error) {
-	return NewKubeExecutorWithOptions(KubeExecutorOptions{
-		KubeconfigPath: kubeconfigPath,
-		Namespace:      namespace,
-		ToolboxPodHint: toolboxPodHint,
-	})
+func WithToolboxPodHint(name string) KubeOption {
+	return func(k *KubeExecutor) { k.toolboxPod = name }
 }
 
-func NewKubeExecutorWithOptions(opts KubeExecutorOptions) (*KubeExecutor, error) {
-	restConfig, err := clientcmd.BuildConfigFromFlags("", opts.KubeconfigPath)
+func WithServerOverride(server string) KubeOption {
+	return func(k *KubeExecutor) { k.serverOverride = server }
+}
+
+func WithInsecureSkipTLSVerify(skip bool) KubeOption {
+	return func(k *KubeExecutor) { k.insecureSkipTLSVerify = skip }
+}
+
+func NewKubeExecutor(kubeconfigPath string, opts ...KubeOption) (*KubeExecutor, error) {
+	k := &KubeExecutor{}
+	for _, opt := range opts {
+		opt(k)
+	}
+
+	restConfig, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
 	if err != nil {
 		return nil, fmt.Errorf("build kubeconfig: %w", err)
 	}
 
-	if opts.ServerOverride != "" {
-		restConfig.Host = opts.ServerOverride
+	if k.serverOverride != "" {
+		restConfig.Host = k.serverOverride
 	}
-	if opts.InsecureSkipTLSVerify {
+	if k.insecureSkipTLSVerify {
 		restConfig.TLSClientConfig.Insecure = true
 		restConfig.TLSClientConfig.CAData = nil
 		restConfig.TLSClientConfig.CAFile = ""
@@ -61,12 +72,9 @@ func NewKubeExecutorWithOptions(opts KubeExecutorOptions) (*KubeExecutor, error)
 		return nil, fmt.Errorf("create k8s client: %w", err)
 	}
 
-	return &KubeExecutor{
-		restConfig: restConfig,
-		clientset:  clientset,
-		namespace:  opts.Namespace,
-		toolboxPod: opts.ToolboxPodHint,
-	}, nil
+	k.restConfig = restConfig
+	k.clientset = clientset
+	return k, nil
 }
 
 func (k *KubeExecutor) findToolboxPod(ctx context.Context) (string, error) {

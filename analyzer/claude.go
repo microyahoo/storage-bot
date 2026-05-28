@@ -9,17 +9,33 @@ import (
 )
 
 type ClaudeProvider struct {
-	client anthropic.Client
-	model  string
+	apiKey  string
+	baseURL string
+	model   string
+	client  anthropic.Client
 }
 
-func NewClaudeProvider(apiKey, baseURL, model string) *ClaudeProvider {
-	opts := []option.RequestOption{option.WithAPIKey(apiKey)}
-	if baseURL != "" {
-		opts = append(opts, option.WithBaseURL(baseURL))
+type ClaudeOption func(*ClaudeProvider)
+
+func WithClaudeBaseURL(baseURL string) ClaudeOption {
+	return func(c *ClaudeProvider) { c.baseURL = baseURL }
+}
+
+func WithClaudeModel(model string) ClaudeOption {
+	return func(c *ClaudeProvider) { c.model = model }
+}
+
+func NewClaudeProvider(apiKey string, opts ...ClaudeOption) *ClaudeProvider {
+	c := &ClaudeProvider{apiKey: apiKey}
+	for _, opt := range opts {
+		opt(c)
 	}
-	client := anthropic.NewClient(opts...)
-	return &ClaudeProvider{client: client, model: model}
+	reqOpts := []option.RequestOption{option.WithAPIKey(c.apiKey)}
+	if c.baseURL != "" {
+		reqOpts = append(reqOpts, option.WithBaseURL(c.baseURL))
+	}
+	c.client = anthropic.NewClient(reqOpts...)
+	return c
 }
 
 func (c *ClaudeProvider) Chat(ctx context.Context, systemPrompt, userMessage string) (string, error) {

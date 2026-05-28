@@ -17,13 +17,32 @@ type OpenAIProvider struct {
 	client  *http.Client
 }
 
-func NewOpenAIProvider(apiKey, baseURL, model string) *OpenAIProvider {
-	return &OpenAIProvider{
-		apiKey:  apiKey,
-		baseURL: baseURL,
-		model:   model,
-		client:  &http.Client{Timeout: 120 * time.Second},
+type OpenAIOption func(*OpenAIProvider)
+
+func WithOpenAIAPIKey(apiKey string) OpenAIOption {
+	return func(o *OpenAIProvider) { o.apiKey = apiKey }
+}
+
+func WithOpenAIBaseURL(baseURL string) OpenAIOption {
+	return func(o *OpenAIProvider) { o.baseURL = baseURL }
+}
+
+func WithOpenAIModel(model string) OpenAIOption {
+	return func(o *OpenAIProvider) { o.model = model }
+}
+
+func WithOpenAITimeout(d time.Duration) OpenAIOption {
+	return func(o *OpenAIProvider) { o.client.Timeout = d }
+}
+
+func NewOpenAIProvider(opts ...OpenAIOption) *OpenAIProvider {
+	o := &OpenAIProvider{
+		client: &http.Client{Timeout: 120 * time.Second},
 	}
+	for _, opt := range opts {
+		opt(o)
+	}
+	return o
 }
 
 type chatRequest struct {

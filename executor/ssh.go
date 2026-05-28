@@ -15,6 +15,15 @@ import (
 
 type SSHExecutor struct{}
 
+// HostIP strips the port from a "host:port" string, returning just the host.
+// If there is no port, the input is returned as-is.
+func HostIP(hostPort string) string {
+	if h, _, err := net.SplitHostPort(hostPort); err == nil {
+		return h
+	}
+	return hostPort
+}
+
 // Run executes a command on node directly.
 // For non-gateway nodes, use RunViaGateway instead.
 func (s *SSHExecutor) Run(ctx context.Context, node config.SSHNode, cmd string) (string, error) {

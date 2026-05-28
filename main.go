@@ -68,7 +68,13 @@ func main() {
 	skills := skill.NewRegistry()
 	audit := security.NewAuditLog(10000)
 
-	handler := bot.NewHandler(feishuClient, clusterMgr, sshExec, az, llmProvider, skills, audit, cfg.Dev)
+	handler := bot.NewHandler(feishuClient, clusterMgr, sshExec,
+		bot.WithAnalyzer(az),
+		bot.WithLLM(llmProvider),
+		bot.WithSkills(skills),
+		bot.WithAudit(audit),
+		bot.WithDev(cfg.Dev),
+	)
 
 	// Register REST storage backends (Yanrong only).
 	handler.ReplaceRESTStorages(buildRESTStorages(cfg.RESTStorages))

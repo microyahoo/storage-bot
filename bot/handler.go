@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net"
 	"sort"
 	"strings"
 	"sync"
@@ -40,20 +39,40 @@ type Handler struct {
 	llmDisabled  atomic.Bool // runtime toggle; initialized from dev.DisableLLM
 }
 
-func NewHandler(feishuClient *lark.Client, mgr *cluster.Manager, sshExec *executor.SSHExecutor, az *analyzer.Analyzer, llm analyzer.LLMProvider, skills *skill.Registry, audit *security.AuditLog, dev config.DevConfig) *Handler {
+type HandlerOption func(*Handler)
+
+func WithAnalyzer(az *analyzer.Analyzer) HandlerOption {
+	return func(h *Handler) { h.analyzer = az }
+}
+
+func WithLLM(llm analyzer.LLMProvider) HandlerOption {
+	return func(h *Handler) { h.llm = llm }
+}
+
+func WithSkills(skills *skill.Registry) HandlerOption {
+	return func(h *Handler) { h.skills = skills }
+}
+
+func WithAudit(audit *security.AuditLog) HandlerOption {
+	return func(h *Handler) { h.audit = audit }
+}
+
+func WithDev(dev config.DevConfig) HandlerOption {
+	return func(h *Handler) { h.dev = dev }
+}
+
+func NewHandler(feishuClient *lark.Client, mgr *cluster.Manager, sshExec *executor.SSHExecutor, opts ...HandlerOption) *Handler {
 	h := &Handler{
 		feishuClient: feishuClient,
 		clusterMgr:   mgr,
 		sshExec:      sshExec,
-		analyzer:     az,
-		llm:          llm,
-		skills:       skills,
 		restStorages: make(map[string]*storage.RESTSkill),
-		audit:        audit,
-		dev:          dev,
 		kubeCache:    make(map[string]*executor.KubeExecutor),
 	}
-	h.llmDisabled.Store(dev.DisableLLM)
+	for _, opt := range opts {
+		opt(h)
+	}
+	h.llmDisabled.Store(h.dev.DisableLLM)
 	return h
 }
 
@@ -620,18 +639,9 @@ func (h *Handler) dryRunReply(clusterName, action, willDo string) string {
 	return fmt.Sprintf("**[dry-run] 集群 %s**\n\n动作: %s\n将要执行: %s\n\n(dev.dry_run = true, 未实际执行任何命令)", clusterName, action, willDo)
 }
 
-// hostIP strips the port from a "host:port" string, returning just the IP/hostname.
-// If there is no port, the input is returned as-is.
-func hostIP(hostPort string) string {
-	if h, _, err := net.SplitHostPort(hostPort); err == nil {
-		return h
-	}
-	return hostPort
-}
-
 // isGateway reports whether node is the gateway itself (same IP, ignoring port).
 func isGateway(nodeHost, gwHost string) bool {
-	return hostIP(nodeHost) == hostIP(gwHost)
+	return executor.HostIP(nodeHost) == executor.HostIP(gwHost)
 }
 
 func (h *Handler) replyMessage(ctx context.Context, messageID, content string) error {
@@ -664,13 +674,12 @@ func (h *Handler) getKubeExecutor(clusterName string, cfg *config.ClusterConfig)
 		return ke, nil
 	}
 
-	ke, err := executor.NewKubeExecutorWithOptions(executor.KubeExecutorOptions{
-		KubeconfigPath:        cfg.Kubeconfig,
-		Namespace:             cfg.Namespace,
-		ToolboxPodHint:        cfg.ToolboxPod,
-		ServerOverride:        cfg.ServerOverride,
-		InsecureSkipTLSVerify: cfg.InsecureSkipTLSVerify,
-	})
+	ke, err := executor.NewKubeExecutor(cfg.Kubeconfig,
+		executor.WithNamespace(cfg.Namespace),
+		executor.WithToolboxPodHint(cfg.ToolboxPod),
+		executor.WithServerOverride(cfg.ServerOverride),
+		executor.WithInsecureSkipTLSVerify(cfg.InsecureSkipTLSVerify),
+	)
 	if err != nil {
 		return nil, err
 	}

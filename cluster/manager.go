@@ -23,13 +23,12 @@ func NewManager(clusters map[string]*config.ClusterConfig) *Manager {
 		nodeCache: make(map[string][]config.SSHNode),
 	}
 	m.kubeExecFn = func(cfg *config.ClusterConfig) (*executor.KubeExecutor, error) {
-		return executor.NewKubeExecutorWithOptions(executor.KubeExecutorOptions{
-			KubeconfigPath:        cfg.Kubeconfig,
-			Namespace:             cfg.Namespace,
-			ToolboxPodHint:        cfg.ToolboxPod,
-			ServerOverride:        cfg.ServerOverride,
-			InsecureSkipTLSVerify: cfg.InsecureSkipTLSVerify,
-		})
+		return executor.NewKubeExecutor(cfg.Kubeconfig,
+			executor.WithNamespace(cfg.Namespace),
+			executor.WithToolboxPodHint(cfg.ToolboxPod),
+			executor.WithServerOverride(cfg.ServerOverride),
+			executor.WithInsecureSkipTLSVerify(cfg.InsecureSkipTLSVerify),
+		)
 	}
 	return m
 }

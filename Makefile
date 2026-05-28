@@ -5,7 +5,7 @@ VCS_REF := $(shell git rev-parse HEAD)
 clean:
 	rm -rf bin/*
 
-build-local:
+build-local: test
 	@go build -o ./bin/storage-bot main.go
 	@go build -o ./bin/yrfsctl cmd/yrfsctl/main.go
 
