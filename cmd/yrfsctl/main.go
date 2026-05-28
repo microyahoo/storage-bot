@@ -67,6 +67,7 @@ func newRootCmd() *cobra.Command {
 		newInfoCmd(),
 		newQuotaCmd(),
 		newRecyclesCmd(),
+		newRecycleClearCmd(),
 	)
 	return root
 }
@@ -167,6 +168,42 @@ With --path:    GET /api/v2/recycle/file — list deleted files under <path>.
 	}
 	cmd.Flags().StringVar(&filePath, "path", "", "if set, list deleted files under this path (recycle bin chosen by longest prefix)")
 	cmd.Flags().IntVar(&size, "size", 100, "page size for --path (max rows returned)")
+	return cmd
+}
+
+func newRecycleClearCmd() *cobra.Command {
+	var (
+		clearPath string
+		yes       bool
+	)
+	cmd := &cobra.Command{
+		Use:   "recycle-clear",
+		Short: "permanently delete files under --path from the matching recycle bin (POST /api/v2/recycle/<id>/action)",
+		Long: `Picks the recycle bin whose Path is the longest prefix of --path
+and clears all files beneath that path.
+
+DEFAULTS TO DRY-RUN — no request is sent unless --yes is given.
+This is a destructive operation: deleted files cannot be recovered.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if clearPath == "" {
+				return fmt.Errorf("--path is required")
+			}
+			b, ctx, cancel, err := setup()
+			if err != nil {
+				return err
+			}
+			defer cancel()
+			out, err := b.ClearRecycleFiles(ctx, clearPath, !yes)
+			if err != nil {
+				return err
+			}
+			fmt.Println(out)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&clearPath, "path", "", "path to clear; recycle bin auto-selected by longest prefix (required)")
+	cmd.Flags().BoolVar(&yes, "yes", false, "actually perform the clear; without --yes the command is a dry-run")
 	return cmd
 }
 

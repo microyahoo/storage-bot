@@ -205,6 +205,59 @@ func (y *YanrongBackend) ListRecycleFiles(ctx context.Context, queryPath string,
 	return formatRecycleFiles(match, resp.Data.RecycleFiles), nil
 }
 
+// ClearRecycleFiles permanently deletes all files under `queryPath` from the
+// recycle bin that owns it (chosen via the same longest-prefix rule as
+// ListRecycleFiles). The action endpoint is POST /api/v2/recycle/<id>/action
+// with a JSON body {"action":"clear","path":"<path>/"}.
+//
+// If dryRun is true no request is sent — the function returns a description of
+// what *would* happen. This lets the CLI default to dry-run for a destructive
+// operation and only commit on explicit --yes.
+//
+// Returns a short status string on success.
+func (y *YanrongBackend) ClearRecycleFiles(ctx context.Context, queryPath string, dryRun bool) (string, error) {
+	if strings.TrimSpace(queryPath) == "" {
+		return "", fmt.Errorf("path is required")
+	}
+	cleaned := normalizeQuotaPath(queryPath)
+
+	recycles, err := y.listAllRecycles(ctx)
+	if err != nil {
+		return "", err
+	}
+	match, ok := pickRecycleForPath(recycles, cleaned)
+	if !ok {
+		return "", fmt.Errorf("no recycle bin covers path %q (scanned %d entries)", queryPath, len(recycles))
+	}
+
+	// Same trailing-slash rule as ListRecycleFiles: append "/" only in the API
+	// value, leave the caller's queryPath untouched.
+	apiPath := queryPath
+	if !strings.HasSuffix(apiPath, "/") {
+		apiPath += "/"
+	}
+
+	endpoint := fmt.Sprintf("/api/v2/recycle/%d/action", match.ID)
+	body := map[string]string{
+		"action": "delete",
+		"path":   apiPath,
+	}
+
+	if dryRun {
+		return fmt.Sprintf(
+			"🧪 dry-run · 将清空 recycle #%d (path=%s) 下的 %s\n   POST %s\n   body=%v\n   (实际未执行，加 --yes 才会发起请求)",
+			match.ID, match.Path, apiPath, endpoint, body,
+		), nil
+	}
+
+	raw, err := y.authedPost(ctx, endpoint, url.Values{"lang": {"zh"}}, body)
+	if err != nil {
+		return "", fmt.Errorf("clear recycle files: %w", err)
+	}
+	return fmt.Sprintf("🧹 已清空 recycle #%d (path=%s) 下的 %s\n%s",
+		match.ID, match.Path, apiPath, raw), nil
+}
+
 // pickRecycleForPath returns the recycle whose Path is the longest prefix of
 // queryPath. Comparison is done on path components so "/a/b" does NOT match
 // "/a/bc"; the longest-prefix rule resolves nested recycles correctly.
@@ -511,7 +564,7 @@ func truncate(s string, n int) string {
 
 // authedGet runs a GET with the cached token, refreshing once on 401.
 func (y *YanrongBackend) authedGet(ctx context.Context, path string, query url.Values) (string, error) {
-	body, status, err := y.doGet(ctx, path, query)
+	body, status, err := y.doRequest(ctx, "GET", path, query, nil)
 	if err != nil {
 		return "", err
 	}
@@ -520,7 +573,7 @@ func (y *YanrongBackend) authedGet(ctx context.Context, path string, query url.V
 		y.mu.Lock()
 		y.token = ""
 		y.mu.Unlock()
-		body, status, err = y.doGet(ctx, path, query)
+		body, status, err = y.doRequest(ctx, "GET", path, query, nil)
 		if err != nil {
 			return "", err
 		}
@@ -531,7 +584,37 @@ func (y *YanrongBackend) authedGet(ctx context.Context, path string, query url.V
 	return prettyJSON(body), nil
 }
 
-func (y *YanrongBackend) doGet(ctx context.Context, path string, query url.Values) ([]byte, int, error) {
+// authedPost runs a POST with a JSON body and the cached token, refreshing
+// once on 401. Mirrors authedGet for write endpoints (e.g. recycle clear).
+func (y *YanrongBackend) authedPost(ctx context.Context, path string, query url.Values, payload any) (string, error) {
+	var body []byte
+	if payload != nil {
+		var err error
+		body, err = json.Marshal(payload)
+		if err != nil {
+			return "", fmt.Errorf("marshal payload: %w", err)
+		}
+	}
+	resp, status, err := y.doRequest(ctx, "POST", path, query, body)
+	if err != nil {
+		return "", err
+	}
+	if status == http.StatusUnauthorized {
+		y.mu.Lock()
+		y.token = ""
+		y.mu.Unlock()
+		resp, status, err = y.doRequest(ctx, "POST", path, query, body)
+		if err != nil {
+			return "", err
+		}
+	}
+	if status >= 400 {
+		return "", fmt.Errorf("POST %s returned %d: %s", path, status, string(resp))
+	}
+	return prettyJSON(resp), nil
+}
+
+func (y *YanrongBackend) doRequest(ctx context.Context, method, path string, query url.Values, body []byte) ([]byte, int, error) {
 	token, err := y.ensureToken(ctx)
 	if err != nil {
 		return nil, 0, err
@@ -541,24 +624,31 @@ func (y *YanrongBackend) doGet(ctx context.Context, path string, query url.Value
 	if len(query) > 0 {
 		u += "?" + query.Encode()
 	}
-	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	var reqBody io.Reader
+	if len(body) > 0 {
+		reqBody = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, u, reqBody)
 	if err != nil {
 		return nil, 0, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("x-auth-token", token)
 	req.Header.Set("Accept", "application/json")
+	if len(body) > 0 {
+		req.Header.Set("Content-Type", "application/json")
+	}
 
 	resp, err := y.client.Do(req)
 	if err != nil {
-		return nil, 0, fmt.Errorf("GET %s: %w", u, err)
+		return nil, 0, fmt.Errorf("%s %s: %w", method, u, err)
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, resp.StatusCode, fmt.Errorf("read response: %w", err)
 	}
-	return body, resp.StatusCode, nil
+	return respBody, resp.StatusCode, nil
 }
 
 func (y *YanrongBackend) ensureToken(ctx context.Context) (string, error) {
