@@ -239,37 +239,37 @@ func normalizeQuotaPath(p string) string {
 
 func formatQuotaEntry(q quotaEntry) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "path        : %s\n", q.Path)
-	fmt.Fprintf(&b, "quota_id    : %d\n", q.QuotaID)
-	fmt.Fprintf(&b, "recursive   : %t\n", q.Recursive)
-	fmt.Fprintf(&b, "op_status   : %s\n", q.OpStatus)
-	fmt.Fprintf(&b, "space_used  : %s  (raw=%d bytes)\n", humanBytes(float64(q.SpaceUsed)), q.SpaceUsed)
+	fmt.Fprintf(&b, "📁 path        : %s\n", q.Path)
+	fmt.Fprintf(&b, "🆔 quota_id    : %d\n", q.QuotaID)
+	fmt.Fprintf(&b, "🔁 recursive   : %t\n", q.Recursive)
+	fmt.Fprintf(&b, "📌 op_status   : %s\n", q.OpStatus)
+	fmt.Fprintf(&b, "💾 space_used  : %s  (raw=%d bytes)\n", humanBytes(float64(q.SpaceUsed)), q.SpaceUsed)
 	if q.SpaceLimit > 0 {
 		pct := float64(q.SpaceUsed) / float64(q.SpaceLimit) * 100
-		fmt.Fprintf(&b, "space_limit : %s  (raw=%d bytes, used %.1f%%)\n", humanBytes(float64(q.SpaceLimit)), q.SpaceLimit, pct)
+		fmt.Fprintf(&b, "📦 space_limit : %s  (raw=%d bytes, used %.1f%%)\n", humanBytes(float64(q.SpaceLimit)), q.SpaceLimit, pct)
 	} else {
-		fmt.Fprintf(&b, "space_limit : unlimited\n")
+		fmt.Fprintf(&b, "📦 space_limit : unlimited\n")
 	}
-	fmt.Fprintf(&b, "inode_used  : %d\n", q.InodeUsed)
+	fmt.Fprintf(&b, "🧮 inode_used  : %d\n", q.InodeUsed)
 	if q.InodeLimit > 0 {
-		fmt.Fprintf(&b, "inode_limit : %d\n", q.InodeLimit)
+		fmt.Fprintf(&b, "🧮 inode_limit : %d\n", q.InodeLimit)
 	} else {
-		fmt.Fprintf(&b, "inode_limit : unlimited\n")
+		fmt.Fprintf(&b, "🧮 inode_limit : unlimited\n")
 	}
-	fmt.Fprintf(&b, "dir_used    : %d\n", q.DirUsed)
-	fmt.Fprintf(&b, "file_used   : %d\n", q.FileUsed)
+	fmt.Fprintf(&b, "🗂 dir_used    : %d\n", q.DirUsed)
+	fmt.Fprintf(&b, "📄 file_used   : %d\n", q.FileUsed)
 	return strings.TrimRight(b.String(), "\n")
 }
 
 func formatQuotas(quotas []quotaEntry) string {
 	if len(quotas) == 0 {
-		return "(no quotas)"
+		return "🚫 (no quotas)"
 	}
 	// Sort by path for stable output.
 	sort.Slice(quotas, func(i, j int) bool { return quotas[i].Path < quotas[j].Path })
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "Quotas (%d total):\n", len(quotas))
+	fmt.Fprintf(&b, "📊 Quotas (%d total)\n", len(quotas))
 	fmt.Fprintf(&b, "%-50s %12s %12s %10s\n", "PATH", "USED", "LIMIT", "USED%")
 	for _, q := range quotas {
 		limit := "unlimited"

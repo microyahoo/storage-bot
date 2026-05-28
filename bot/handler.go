@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -15,6 +14,7 @@ import (
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 
 	"github.com/microyahoo/storage-bot/analyzer"
+	"github.com/microyahoo/storage-bot/card"
 	"github.com/microyahoo/storage-bot/cluster"
 	"github.com/microyahoo/storage-bot/config"
 	"github.com/microyahoo/storage-bot/executor"
@@ -193,19 +193,20 @@ func (h *Handler) HandleMessage(ctx context.Context, event *larkim.P2MessageRece
 	status := "ok"
 	if err != nil {
 		status = "error: " + err.Error()
-		reply = fmt.Sprintf("执行出错: %v", err)
+		reply = fmt.Sprintf("```\n%v\n```", err)
 	}
 
 	if h.audit != nil {
 		h.audit.Record(userID, action.ClusterName, action.Type.String(), text, status)
 	}
 
-	return h.replyMessage(ctx, *msg.MessageId, reply)
+	c := cardForAction(action, reply, err)
+	return h.replyCard(ctx, *msg.MessageId, c)
 }
 
 func (h *Handler) handleHealth(ctx context.Context, action intent.Action) (string, error) {
 	if action.ClusterName == "" {
-		return "请指定集群名称，例如: check cluster-01 health\n\n" + h.listClusters(), nil
+		return "📝 请指定集群名称，例如：`check cluster-01 health`\n\n" + h.listClusters(), nil
 	}
 
 	clusterName, clusterCfg, err := h.clusterMgr.FindByPrefix(action.ClusterName)
@@ -232,7 +233,7 @@ func (h *Handler) handleHealth(ctx context.Context, action intent.Action) (strin
 
 func (h *Handler) handleLogAnalysis(ctx context.Context, action intent.Action) (string, error) {
 	if action.ClusterName == "" {
-		return "请指定集群名称，例如: analyze logs cluster-01\n\n" + h.listClusters(), nil
+		return "📝 请指定集群名称，例如：`analyze logs cluster-01`\n\n" + h.listClusters(), nil
 	}
 
 	clusterName, clusterCfg, err := h.clusterMgr.FindByPrefix(action.ClusterName)
@@ -245,7 +246,7 @@ func (h *Handler) handleLogAnalysis(ctx context.Context, action intent.Action) (
 		return "", fmt.Errorf("resolve nodes for %s: %w", clusterName, err)
 	}
 	if len(allSSHNodes) == 0 {
-		return fmt.Sprintf("集群 %s 没有配置 SSH 节点，请配置 gateway_node 或 ssh_nodes", clusterName), nil
+		return fmt.Sprintf("⚠️ 集群 `%s` 没有配置 SSH 节点，请配置 `gateway_node` 或 `ssh_nodes`", clusterName), nil
 	}
 
 	var allLogs []string
@@ -253,7 +254,7 @@ func (h *Handler) handleLogAnalysis(ctx context.Context, action intent.Action) (
 	if action.NodeName != "" {
 		targetNodes = filterNodes(allSSHNodes, action.NodeName)
 		if len(targetNodes) == 0 {
-			return fmt.Sprintf("集群 %s 中未找到节点 %s", clusterName, action.NodeName), nil
+			return fmt.Sprintf("🚫 集群 `%s` 中未找到节点 `%s`", clusterName, action.NodeName), nil
 		}
 	}
 
@@ -284,7 +285,7 @@ func (h *Handler) handleLogAnalysis(ctx context.Context, action intent.Action) (
 
 func (h *Handler) handleNodeDiag(ctx context.Context, action intent.Action) (string, error) {
 	if action.ClusterName == "" {
-		return "请指定集群名称，例如: check node-1 cluster-01\n\n" + h.listClusters(), nil
+		return "📝 请指定集群名称，例如：`check node-1 cluster-01`\n\n" + h.listClusters(), nil
 	}
 
 	clusterName, clusterCfg, err := h.clusterMgr.FindByPrefix(action.ClusterName)
@@ -293,7 +294,7 @@ func (h *Handler) handleNodeDiag(ctx context.Context, action intent.Action) (str
 	}
 
 	if action.NodeName == "" {
-		return "请指定节点名称，例如: check node-1 cluster-01", nil
+		return "📝 请指定节点名称，例如：`check node-1 cluster-01`", nil
 	}
 
 	allSSHNodes, err := h.clusterMgr.ResolveSSHNodes(ctx, clusterName, clusterCfg)
@@ -303,7 +304,7 @@ func (h *Handler) handleNodeDiag(ctx context.Context, action intent.Action) (str
 
 	nodes := filterNodes(allSSHNodes, action.NodeName)
 	if len(nodes) == 0 {
-		return fmt.Sprintf("集群 %s 中未找到节点 %s", clusterName, action.NodeName), nil
+		return fmt.Sprintf("🚫 集群 `%s` 中未找到节点 `%s`", clusterName, action.NodeName), nil
 	}
 
 	node := nodes[0]
@@ -328,98 +329,87 @@ func (h *Handler) handleNodeDiag(ctx context.Context, action intent.Action) (str
 }
 
 func (h *Handler) helpMessage() string {
-	return `**Storage Bot 使用指南**
-
-支持的命令（支持中英文自然语言输入）：
-
-**集群列表**: list clusters / 列表集群 / 有哪些集群
-**健康检查**: check cluster-01 / 看看01集群怎么了 / cluster-01有问题吗
-**日志分析**: analyze logs cluster-01 / 分析01的日志
-**节点诊断**: check node-1 cluster-01 / 看看01集群的node-1
-**Skill**: osd cluster-01 / 看看01的pg状态 / cluster-02容量
-**Skill列表**: list skills / 有哪些技能
-
-**Skill 批量执行**（仅 set/unset nobackfill、set/unset noout 支持）：
-  单套集群:   set nobackfill cdn
-  前缀匹配:   set nobackfill cdn        （匹配所有含 "cdn" 的集群）
-  全量执行:   set nobackfill all / set nobackfill 所有
-  全量排除:   set nobackfill all except cdn-test cdn-staging
-              set nobackfill 所有 排除 cdn-test
-
-**磁盘 IO**：
-  所有节点:   iostat cdn
-  指定节点:   iostat cdn bd-cdn-node02
-              （节点名不存在时会列出可用节点）
-
-**RGW PG 优化**（优化 rgw.buckets.data 存储池 PG 分布）：
-  optimize rgw cluster-01
-  optimize rgw cluster-01 max=100    （指定最大调整条目数，默认 100）
-  优化rgw pg cluster-01
-
-**LLM 开关**：
-  enable llm / 开启llm / 启用llm
-  disable llm / 关闭llm / 禁用llm
-
-**焱融(yrfs) 存储**（按 rest_storages 名称路由，如 yrfs01）：
-  集群信息:   yrfs01 / yrfs01 info
-  健康状态:   yrfs01 health / yrfs01 状态
-  配额列表:   yrfs01 quotas / yrfs01 配额
-  精确路径:   yrfs01 usage /drtraining/user/liangzheng
-  用户目录:   yrfs01 user liangzheng              （默认 private，自动拼接 private_user_prefix）
-              yrfs01 user liangzheng public       （拼接 public_user_prefix）
-              yrfs01 用户 liangzheng 公共
-
-示例：
-  @bot 帮我看看cluster-01的状态
-  @bot 分析一下cluster-02的日志
-  @bot iostat cdn bd-cdn-node02
-  @bot set nobackfill cdn
-  @bot set nobackfill all except cdn-test
-  @bot optimize rgw cluster-01 max=100
-  @bot yrfs01 user liangzheng private
-  @bot yrfs01 quotas
-  @bot disable llm
-  @bot enable llm`
+	return "支持中英文自然语言输入。以下命令均可 `@bot` 直接发送：\n\n" +
+		"**🗂 集群与列表**\n" +
+		"- `list clusters` / `列表集群` / `有哪些集群`\n" +
+		"- `list skills` / `有哪些技能`\n\n" +
+		"**🩺 健康 & 诊断**\n" +
+		"- 健康检查：`check cluster-01` / `看看01集群怎么了`\n" +
+		"- 日志分析：`analyze logs cluster-01`\n" +
+		"- 节点诊断：`check node-1 cluster-01`\n\n" +
+		"**⚙️ Skill 执行**\n" +
+		"- 单集群：`osd cluster-01` / `cluster-02 容量`\n" +
+		"- 批量（仅 set/unset nobackfill/noout）：\n" +
+		"  - 前缀匹配：`set nobackfill cdn`\n" +
+		"  - 全量：`set nobackfill all`\n" +
+		"  - 全量排除：`set nobackfill all except cdn-test cdn-staging`\n\n" +
+		"**💽 磁盘 IO**\n" +
+		"- 所有节点：`iostat cdn`\n" +
+		"- 指定节点：`iostat cdn bd-cdn-node02`\n\n" +
+		"**📈 RGW PG 优化**\n" +
+		"- `optimize rgw cluster-01`（默认 max=100）\n" +
+		"- `optimize rgw cluster-01 max=50`\n\n" +
+		"**🤖 LLM 开关**\n" +
+		"- `enable llm` / `开启llm`\n" +
+		"- `disable llm` / `关闭llm`\n\n" +
+		"**📦 焱融(yrfs) 存储**（按 `rest_storages` 名称路由，如 `yrfs01`）\n" +
+		"- 集群信息：`yrfs01` / `yrfs01 info`\n" +
+		"- 健康状态：`yrfs01 health`\n" +
+		"- 配额列表：`yrfs01 quotas`\n" +
+		"- 精确路径：`yrfs01 usage /drtraining/user/liangzheng`\n" +
+		"- 用户目录：`yrfs01 user liangzheng`（默认 private）\n" +
+		"  - 公共目录：`yrfs01 user liangzheng public`\n\n" +
+		"**💡 示例**\n" +
+		"```\n" +
+		"@bot 帮我看看cluster-01的状态\n" +
+		"@bot 分析一下cluster-02的日志\n" +
+		"@bot iostat cdn bd-cdn-node02\n" +
+		"@bot set nobackfill all except cdn-test\n" +
+		"@bot optimize rgw cluster-01 max=100\n" +
+		"@bot yrfs01 user liangzheng private\n" +
+		"@bot yrfs01 quotas\n" +
+		"```"
 }
 
 func (h *Handler) listClusters() string {
-	clusters := h.clusterMgr.List()
-	rest := h.ListRESTStorages()
-	sort.Strings(clusters)
-	sort.Strings(rest)
+	cephs := h.ListClusters()
+	rests := h.ListRESTStorageSummaries()
 
-	if len(clusters) == 0 && len(rest) == 0 {
-		return "当前没有配置任何集群或存储"
+	if len(cephs) == 0 && len(rests) == 0 {
+		return "🚫 当前没有配置任何集群或存储"
 	}
 
 	var sb strings.Builder
-	if len(clusters) > 0 {
-		sb.WriteString(fmt.Sprintf("**Ceph 集群** (共 %d 套):\n", len(clusters)))
-		for _, name := range clusters {
-			sb.WriteString(fmt.Sprintf("  %s\n", name))
+
+	if len(cephs) > 0 {
+		sb.WriteString(fmt.Sprintf("🛰 **Ceph 集群** · %d 套\n", len(cephs)))
+		for _, c := range cephs {
+			sb.WriteString(fmt.Sprintf("　🔹 `%s`\n", c.Name))
 		}
 	}
-	if len(rest) > 0 {
+
+	if len(rests) > 0 {
 		if sb.Len() > 0 {
 			sb.WriteString("\n")
 		}
-		sb.WriteString(fmt.Sprintf("**焱融存储** (共 %d 套):\n", len(rest)))
-		for _, name := range rest {
-			sb.WriteString(fmt.Sprintf("  %s\n", name))
+		sb.WriteString(fmt.Sprintf("📦 **焱融(yrfs) 存储** · %d 套\n", len(rests)))
+		for _, r := range rests {
+			sb.WriteString(fmt.Sprintf("　🔸 `%s`\n", r.Name))
 		}
 	}
+
 	return sb.String()
 }
 
 func (h *Handler) listSkills() string {
 	skills := h.skills.List()
 	if len(skills) == 0 {
-		return "当前没有注册任何 Skill"
+		return "🚫 当前没有注册任何 Skill"
 	}
 	var sb strings.Builder
-	sb.WriteString("**可用的 Skills:**\n")
+	sb.WriteString(fmt.Sprintf("🧰 共 **%d** 个 Skill\n", len(skills)))
 	for _, s := range skills {
-		sb.WriteString(fmt.Sprintf("  **%s** — %s\n", s.Name(), s.Description()))
+		sb.WriteString(fmt.Sprintf("　🔧 `%s` — %s\n", s.Name(), s.Description()))
 	}
 	return sb.String()
 }
@@ -427,15 +417,15 @@ func (h *Handler) listSkills() string {
 func (h *Handler) toggleLLM(enable bool) string {
 	h.llmDisabled.Store(!enable)
 	if enable {
-		return "LLM 已**开启**：将使用 AI 进行意图解析和结果分析"
+		return "✅ LLM 已**开启** — 将使用 AI 进行意图解析和结果分析"
 	}
-	return "LLM 已**关闭**：仅使用规则解析，不调用 AI"
+	return "🔕 LLM 已**关闭** — 仅使用规则解析，不调用 AI"
 }
 
 func (h *Handler) handleSkill(ctx context.Context, action intent.Action) (string, error) {
 	s, ok := h.skills.Get(action.SkillName)
 	if !ok {
-		return fmt.Sprintf("未找到 Skill: %s\n\n%s", action.SkillName, h.listSkills()), nil
+		return fmt.Sprintf("🚫 未找到 Skill `%s`\n\n%s", action.SkillName, h.listSkills()), nil
 	}
 
 	// Resolve target cluster list.
@@ -443,20 +433,20 @@ func (h *Handler) handleSkill(ctx context.Context, action intent.Action) (string
 	switch {
 	case action.ClusterName == "all":
 		if !isBroadcastAllowed(action.SkillName) {
-			return fmt.Sprintf("Skill %s 不支持批量执行，请指定集群名称", action.SkillName), nil
+			return fmt.Sprintf("⚠️ Skill `%s` 不支持批量执行，请指定集群名称", action.SkillName), nil
 		}
 		targetClusters = h.clusterMgr.List()
 	case strings.HasSuffix(action.ClusterName, "*"):
 		if !isBroadcastAllowed(action.SkillName) {
-			return fmt.Sprintf("Skill %s 不支持批量执行，请指定集群名称", action.SkillName), nil
+			return fmt.Sprintf("⚠️ Skill `%s` 不支持批量执行，请指定集群名称", action.SkillName), nil
 		}
 		prefix := strings.TrimSuffix(action.ClusterName, "*")
 		targetClusters = h.clusterMgr.ListByPrefix(prefix)
 		if len(targetClusters) == 0 {
-			return fmt.Sprintf("没有匹配前缀 %q 的集群\n\n%s", prefix, h.listClusters()), nil
+			return fmt.Sprintf("🚫 没有匹配前缀 `%s` 的集群\n\n%s", prefix, h.listClusters()), nil
 		}
 	case action.ClusterName == "":
-		return fmt.Sprintf("请指定集群名称来执行 Skill %s，或输入 all 对所有集群执行\n\n%s", action.SkillName, h.listClusters()), nil
+		return fmt.Sprintf("📝 请指定集群名称来执行 Skill `%s`，或输入 `all` 对所有集群执行\n\n%s", action.SkillName, h.listClusters()), nil
 	default:
 		// Single cluster.
 		clusterName, clusterCfg, err := h.clusterMgr.FindByPrefix(action.ClusterName)
@@ -485,7 +475,7 @@ func (h *Handler) handleSkill(ctx context.Context, action intent.Action) (string
 	}
 
 	if len(targetClusters) == 0 {
-		return "排除后没有剩余目标集群", nil
+		return "🚫 排除后没有剩余目标集群", nil
 	}
 
 	return h.handleSkillOnClusters(ctx, s, targetClusters, action.ExcludeClusters)
@@ -509,7 +499,7 @@ func (h *Handler) handleSkillOnClusters(ctx context.Context, s skill.Skill, clus
 	for _, clusterName := range clusters {
 		clusterCfg, err := h.clusterMgr.Get(clusterName)
 		if err != nil {
-			results = append(results, fmt.Sprintf("**%s**: 获取集群配置失败: %v", clusterName, err))
+			results = append(results, fmt.Sprintf("**❌ %s**：获取集群配置失败：%v", clusterName, err))
 			continue
 		}
 		if h.dev.DryRun {
@@ -518,16 +508,16 @@ func (h *Handler) handleSkillOnClusters(ctx context.Context, s skill.Skill, clus
 		}
 		output, err := h.runSkillOnCluster(ctx, s, clusterName, clusterCfg, "", nil)
 		if err != nil {
-			results = append(results, fmt.Sprintf("**%s**: 执行失败: %v", clusterName, err))
+			results = append(results, fmt.Sprintf("**❌ %s**：执行失败：%v", clusterName, err))
 		} else {
-			results = append(results, fmt.Sprintf("**%s**:\n%s", clusterName, output))
+			results = append(results, fmt.Sprintf("**✅ %s**\n%s", clusterName, output))
 		}
 	}
 	excludeNote := ""
 	if len(excludes) > 0 {
-		excludeNote = fmt.Sprintf("（已排除: %s）", strings.Join(excludes, ", "))
+		excludeNote = fmt.Sprintf("（已排除：`%s`）", strings.Join(excludes, "`、`"))
 	}
-	return fmt.Sprintf("批量执行 %s（共 %d 套集群%s）:\n\n%s",
+	return fmt.Sprintf("🚀 批量执行 **%s** · 共 %d 套集群%s\n\n%s",
 		s.Description(), len(clusters), excludeNote, strings.Join(results, "\n\n---\n\n")), nil
 }
 
@@ -598,7 +588,7 @@ func (h *Handler) handleRESTStorage(ctx context.Context, action intent.Action) (
 	rs, ok := h.restStorages[action.StorageName]
 	h.mu.Unlock()
 	if !ok {
-		return fmt.Sprintf("未找到存储 %s，已配置的 REST 存储: %v", action.StorageName, h.ListRESTStorages()), nil
+		return fmt.Sprintf("🚫 未找到存储 `%s`\n\n已配置的 REST 存储：`%v`", action.StorageName, h.ListRESTStorages()), nil
 	}
 
 	if h.dev.DryRun {
@@ -621,7 +611,7 @@ func (h *Handler) analyzeOrEcho(ctx context.Context, clusterName, title, diagnos
 	}
 	slog.Info("AI analysis with raw output", "cluster", clusterName, "title", title, "diagnostics", output, "llm enable", !h.llmDisabled.Load())
 	if h.llmDisabled.Load() || h.analyzer == nil {
-		return fmt.Sprintf("**集群 %s — %s [LLM disabled]**\n\n```\n%s\n```", clusterName, title, diagnostics)
+		return "🔕 **LLM 已关闭** · 以下为原始输出\n\n" + renderRaw(diagnostics)
 	}
 
 	ctx, cancelFunc := context.WithTimeout(ctx, time.Minute)
@@ -630,13 +620,22 @@ func (h *Handler) analyzeOrEcho(ctx context.Context, clusterName, title, diagnos
 	analysis, err := h.analyzer.Analyze(ctx, clusterName, diagnostics)
 	if err != nil {
 		slog.Warn("AI analysis failed, returning raw output", "cluster", clusterName, "title", title, "error", err)
-		return fmt.Sprintf("**集群 %s — %s**\n\n```\n%s\n```", clusterName, title, diagnostics)
+		return "⚠️ **AI 分析失败** · 返回原始输出\n\n" + renderRaw(diagnostics)
 	}
-	return fmt.Sprintf("**集群 %s — %s 报告**\n\n%s", clusterName, title, analysis)
+	return fmt.Sprintf("🤖 **AI 报告**\n\n%s", analysis)
+}
+
+// renderRaw wraps plain command output in a code fence, but passes through
+// already-formatted skill output (which contains its own markdown / fences).
+func renderRaw(s string) string {
+	if strings.Contains(s, "```") {
+		return s
+	}
+	return "📄 **原始输出**\n```\n" + s + "\n```"
 }
 
 func (h *Handler) dryRunReply(clusterName, action, willDo string) string {
-	return fmt.Sprintf("**[dry-run] 集群 %s**\n\n动作: %s\n将要执行: %s\n\n(dev.dry_run = true, 未实际执行任何命令)", clusterName, action, willDo)
+	return fmt.Sprintf("🧪 **dry-run** · 集群 `%s`\n\n🎯 **动作** %s\n🛠 **将要执行** %s\n\n💡 `dev.dry_run = true`，未实际执行任何命令", clusterName, action, willDo)
 }
 
 // isGateway reports whether node is the gateway itself (same IP, ignoring port).
@@ -644,16 +643,17 @@ func isGateway(nodeHost, gwHost string) bool {
 	return executor.HostIP(nodeHost) == executor.HostIP(gwHost)
 }
 
-func (h *Handler) replyMessage(ctx context.Context, messageID, content string) error {
-	body := map[string]string{"text": content}
-	contentJSON, _ := json.Marshal(body)
-
+func (h *Handler) replyCard(ctx context.Context, messageID string, c *card.Card) error {
+	content, err := c.JSON()
+	if err != nil {
+		return fmt.Errorf("build card: %w", err)
+	}
 	resp, err := h.feishuClient.Im.Message.Reply(ctx,
 		larkim.NewReplyMessageReqBuilder().
 			MessageId(messageID).
 			Body(larkim.NewReplyMessageReqBodyBuilder().
-				MsgType("text").
-				Content(string(contentJSON)).
+				MsgType("interactive").
+				Content(content).
 				Build()).
 			Build())
 
@@ -664,6 +664,61 @@ func (h *Handler) replyMessage(ctx context.Context, messageID, content string) e
 		return fmt.Errorf("reply failed: code=%d, msg=%s", resp.Code, resp.Msg)
 	}
 	return nil
+}
+
+// cardForAction wraps the handler's body string in a themed Feishu card. The
+// header (emoji + title + color) is chosen from the action type; errors always
+// flip to a red ⚠ header regardless of action.
+func cardForAction(action intent.Action, body string, err error) *card.Card {
+	if err != nil {
+		return card.New("⚠️", "执行出错", card.ThemeRed).
+			Body(body).
+			Note("可输入 `help` 查看支持的指令")
+	}
+
+	switch action.Type {
+	case intent.ActionHelp:
+		return card.New("📖", "Storage Bot 使用指南", card.ThemeBlue).Body(body)
+	case intent.ActionListClusters:
+		return card.New("🗂", "集群与存储列表", card.ThemeBlue).Body(body)
+	case intent.ActionListSkills:
+		return card.New("🧰", "可用 Skills", card.ThemeBlue).Body(body)
+	case intent.ActionToggleLLM:
+		theme := card.ThemeGreen
+		emoji := "🟢"
+		if !action.ToggleLLMEnable {
+			theme = card.ThemeGray
+			emoji = "⚪"
+		}
+		return card.New(emoji, "LLM 开关", theme).Body(body)
+	case intent.ActionHealth:
+		return card.New("🩺", titleWithCluster("健康检查", action.ClusterName), card.ThemeTurquoise).Body(body)
+	case intent.ActionLogAnalysis:
+		return card.New("📜", titleWithCluster("日志分析", action.ClusterName), card.ThemePurple).Body(body)
+	case intent.ActionNodeDiag:
+		t := "节点诊断"
+		if action.NodeName != "" {
+			t = "节点诊断 · " + action.NodeName
+		}
+		return card.New("🖥", titleWithCluster(t, action.ClusterName), card.ThemeOrange).Body(body)
+	case intent.ActionSkill:
+		t := "Skill"
+		if action.SkillName != "" {
+			t = "Skill · " + action.SkillName
+		}
+		return card.New("⚙️", titleWithCluster(t, action.ClusterName), card.ThemeBlue).Body(body)
+	case intent.ActionRESTStorage:
+		return card.New("📦", titleWithCluster("焱融存储", action.StorageName), card.ThemeTurquoise).Body(body)
+	default:
+		return card.New("💬", "Storage Bot", card.ThemeBlue).Body(body)
+	}
+}
+
+func titleWithCluster(label, name string) string {
+	if name == "" {
+		return label
+	}
+	return label + " · " + name
 }
 
 func (h *Handler) getKubeExecutor(clusterName string, cfg *config.ClusterConfig) (*executor.KubeExecutor, error) {

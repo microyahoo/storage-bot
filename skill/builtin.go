@@ -103,9 +103,9 @@ func (s *IOStat) Execute(sc *Context) (string, error) {
 		}
 		output, err := sc.RunOnNode(sshNode, "iostat -x 1 3 2>/dev/null || cat /proc/diskstats")
 		if err != nil {
-			results = append(results, fmt.Sprintf("=== %s ===\nERROR: %v", node.Name, err))
+			results = append(results, fmt.Sprintf("📌 **%s** ❌\n```\n%v\n```", node.Name, err))
 		} else {
-			results = append(results, fmt.Sprintf("=== %s ===\n%s", node.Name, output))
+			results = append(results, fmt.Sprintf("📌 **%s**\n```\n%s\n```", node.Name, output))
 		}
 	}
 	return strings.Join(results, "\n\n"), nil
@@ -128,15 +128,13 @@ func (s *ListNodes) Execute(sc *Context) (string, error) {
 	}
 
 	if len(nodes) == 0 {
-		return "未发现节点", nil
+		return "🚫 未发现节点", nil
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("集群 %s 共 %d 个节点:\n\n", sc.ClusterName, len(nodes)))
-	sb.WriteString(fmt.Sprintf("%-40s  %s\n", "NODE NAME", "INTERNAL IP"))
-	sb.WriteString(strings.Repeat("-", 60) + "\n")
+	sb.WriteString(fmt.Sprintf("🖧 集群 **`%s`** · 共 **%d** 个节点\n", sc.ClusterName, len(nodes)))
 	for _, n := range nodes {
-		sb.WriteString(fmt.Sprintf("%-40s  %s\n", n.Name, n.InternalIP))
+		sb.WriteString(fmt.Sprintf("　🟢 `%s` &nbsp;→ &nbsp;`%s`\n", n.Name, n.InternalIP))
 	}
 	return sb.String(), nil
 }
@@ -151,9 +149,9 @@ func runCephCommands(sc *Context, commands []string) (string, error) {
 		args := strings.Fields(cmd)
 		output, err := sc.KubeExec.RunCephCommand(sc.Ctx, args...)
 		if err != nil {
-			results = append(results, fmt.Sprintf("=== ceph %s ===\nERROR: %v", cmd, err))
+			results = append(results, fmt.Sprintf("📡 `ceph %s` ❌\n```\n%v\n```", cmd, err))
 		} else {
-			results = append(results, fmt.Sprintf("=== ceph %s ===\n%s", cmd, output))
+			results = append(results, fmt.Sprintf("📡 `ceph %s`\n```\n%s\n```", cmd, output))
 		}
 	}
 	return strings.Join(results, "\n\n"), nil
@@ -258,7 +256,7 @@ func (s *OptimizeRGWBucketsPG) Execute(sc *Context) (string, error) {
 		}
 	}
 	if pool == "" {
-		return fmt.Sprintf("未找到以 %q 结尾的存储池", rgwBucketsDataSuffix), nil
+		return fmt.Sprintf("🚫 未找到以 `%s` 结尾的存储池", rgwBucketsDataSuffix), nil
 	}
 
 	script := fmt.Sprintf(`set -e
@@ -277,7 +275,7 @@ echo "done"`, max, pool)
 	if err != nil {
 		return "", fmt.Errorf("optimize rgw pg: %w", err)
 	}
-	return fmt.Sprintf("pool: %s\n\n%s", pool, output), nil
+	return fmt.Sprintf("🪄 **优化 PG 分布** · pool `%s`\n```\n%s\n```", pool, output), nil
 }
 
 // filterNodes returns nodes whose name contains nameHint (case-insensitive).

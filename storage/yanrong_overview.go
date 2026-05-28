@@ -35,38 +35,75 @@ func formatOverview(body []byte) (string, bool) {
 	var b strings.Builder
 
 	if p := resp.Data.Product; p != nil {
-		b.WriteString("产品信息:\n")
-		writeKV(&b, "  manufacturer  ", p.Manufacturer)
-		writeKV(&b, "  product       ", p.ProductName)
-		writeKV(&b, "  serial        ", p.ProductSerial)
-		writeKV(&b, "  version       ", p.ProductVersion)
+		b.WriteString("🏷 **产品信息**\n")
+		writeKV(&b, "  🏭 manufacturer", p.Manufacturer)
+		writeKV(&b, "  📦 product     ", p.ProductName)
+		writeKV(&b, "  🔖 serial      ", p.ProductSerial)
+		writeKV(&b, "  🏁 version     ", p.ProductVersion)
 		b.WriteString("\n")
 	}
 
-	b.WriteString("集群配置:\n")
-	writeKV(&b, "  redundancy    ", resp.Data.Redundancy)
+	b.WriteString("⚙️ **集群配置**\n")
+	writeKV(&b, "  🧱 redundancy  ", resp.Data.Redundancy)
 	if resp.Data.Redundancy == "EC" || resp.Data.ECModelN != 0 || resp.Data.ECModelM != 0 {
-		fmt.Fprintf(&b, "  EC model      : N=%d M=%d\n", resp.Data.ECModelN, resp.Data.ECModelM)
+		fmt.Fprintf(&b, "  🧮 EC model    : N=%d M=%d\n", resp.Data.ECModelN, resp.Data.ECModelM)
 	}
 	b.WriteString("\n")
 
 	if h := resp.Data.Health; h != nil {
-		b.WriteString("健康状态:\n")
-		writeKV(&b, "  health        ", h.Health)
+		b.WriteString("🩺 **健康状态**\n")
+		fmt.Fprintf(&b, "  %s health      : %s\n", healthIcon(h.Health), defaultStr(h.Health))
 		b.WriteString("\n")
 	}
 
 	caps := filterCapacity(resp.Data.Cluster)
 	if len(caps) > 0 {
-		b.WriteString("容量 (yrfs_capacity_*):\n")
+		b.WriteString("💽 **容量** (yrfs_capacity_*)\n")
 		// Sort by name for stable output.
 		sort.Slice(caps, func(i, j int) bool { return caps[i].Name < caps[j].Name })
 		for _, c := range caps {
-			fmt.Fprintf(&b, "  %-30s %s  (raw=%.0f bytes)\n", c.Name, humanBytes(c.Value), c.Value)
+			fmt.Fprintf(&b, "  %s %-26s %s  (raw=%.0f bytes)\n", capacityIcon(c.Name), c.Name, humanBytes(c.Value), c.Value)
 		}
 	}
 
 	return strings.TrimRight(b.String(), "\n"), true
+}
+
+// healthIcon maps Yanrong's verdict strings to a status emoji. "health" is the
+// healthy state in this API (not "ok"); warning/error map to ⚠️/❌.
+func healthIcon(verdict string) string {
+	switch strings.ToLower(strings.TrimSpace(verdict)) {
+	case "health", "healthy", "ok":
+		return "🟢"
+	case "warning", "warn":
+		return "🟡"
+	case "error", "critical", "fatal":
+		return "🔴"
+	default:
+		return "⚪"
+	}
+}
+
+// capacityIcon picks an emoji for each yrfs_capacity_* row so total/used/available
+// are visually distinct in the list.
+func capacityIcon(name string) string {
+	switch {
+	case strings.HasSuffix(name, "_total"):
+		return "📦"
+	case strings.HasSuffix(name, "_used"):
+		return "💾"
+	case strings.HasSuffix(name, "_available"), strings.HasSuffix(name, "_free"):
+		return "🆓"
+	default:
+		return "📊"
+	}
+}
+
+func defaultStr(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }
 
 type overviewDataFields struct {
