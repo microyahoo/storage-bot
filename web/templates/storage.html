@@ -11,7 +11,8 @@
     <a href="/storages/{{.Storage.Name}}/info">集群信息 →</a> &nbsp;·&nbsp;
     <a href="/storages/{{.Storage.Name}}/health">健康检查 →</a> &nbsp;·&nbsp;
     <a href="/storages/{{.Storage.Name}}/quotas">配额列表 →</a> &nbsp;·&nbsp;
-    <a href="/storages/{{.Storage.Name}}/user">用户/路径查询 →</a>
+    <a href="/storages/{{.Storage.Name}}/user">用户/路径查询 →</a> &nbsp;·&nbsp;
+    <a href="/storages/{{.Storage.Name}}/recycles">回收站列表 →</a>
   </p>
 </div>
 
@@ -40,5 +41,36 @@
   {{end}}
 </div>
 {{end}}
+
+<div class="card">
+  <h2>回收站</h2>
+  <p class="muted" style="margin-top:0;margin-bottom:12px">
+    列出某路径下回收站文件（自动按最长前缀选 recycle bin）；或清空指定路径。
+  </p>
+  <form method="get" action="/storages/{{.Storage.Name}}/recycles" style="margin-bottom:14px">
+    <div><label>路径</label>
+      <input type="text" name="path" placeholder="/public-data/user/liangzheng" style="min-width:340px"></div>
+    <div><button type="submit">查询文件</button></div>
+    <div><a href="/storages/{{.Storage.Name}}/recycles" class="muted" style="display:inline-block;padding:8px 4px">列出所有回收站 →</a></div>
+  </form>
+
+  <form method="post" action="/storages/{{.Storage.Name}}/recycles">
+    <div><label>清空路径</label>
+      <input type="text" name="path" placeholder="/public-data/user/liangzheng/tmp" style="min-width:340px"></div>
+    <div style="align-self:center">
+      <label style="display:inline-flex;align-items:center;gap:6px;color:var(--text);font-size:13px">
+        <input type="checkbox" name="confirm"> <span>真实清空（不勾选则 dry-run）</span>
+      </label>
+    </div>
+    <div><button type="submit" style="background:var(--err)">清空</button></div>
+  </form>
+  <p class="muted" style="margin-top:10px">
+    ⚠️ 勾选「真实清空」时，仅允许路径在
+    {{if .Storage.PrivateUserPrefix}}<code>{{.Storage.PrivateUserPrefix}}</code>{{else}}<span class="muted">private_user_prefix(未配置)</span>{{end}}
+    或
+    {{if .Storage.PublicUserPrefix}}<code>{{.Storage.PublicUserPrefix}}</code>{{else}}<span class="muted">public_user_prefix(未配置)</span>{{end}}
+    之下的「个人目录」；其他路径会被拒绝。
+  </p>
+</div>
 {{end}}
 {{define "content"}}{{template "storage-content" .}}{{end}}

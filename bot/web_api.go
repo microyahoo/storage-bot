@@ -130,6 +130,35 @@ func (h *Handler) GetStorageDirUsage(ctx context.Context, name, path string) (st
 	return sk.DirUsage(ctx, path)
 }
 
+func (h *Handler) GetStorageRecycles(ctx context.Context, name string) (string, error) {
+	sk, err := h.restSkill(name)
+	if err != nil {
+		return "", err
+	}
+	return sk.ListRecycles(ctx)
+}
+
+func (h *Handler) GetStorageRecycleFiles(ctx context.Context, name, path string) (string, error) {
+	sk, err := h.restSkill(name)
+	if err != nil {
+		return "", err
+	}
+	return sk.ListRecycleFiles(ctx, path, 0)
+}
+
+// ClearStorageRecycle clears all files under path from the matching recycle bin.
+// With dryRun=true (the default the UI sends on a fresh form load) no destructive
+// call is made; the backend still resolves the recycle bin and returns a preview.
+// Real deletion (dryRun=false) is restricted by the storage layer to paths under
+// public_user_prefix / private_user_prefix.
+func (h *Handler) ClearStorageRecycle(ctx context.Context, name, path string, dryRun bool) (string, error) {
+	sk, err := h.restSkill(name)
+	if err != nil {
+		return "", err
+	}
+	return sk.ClearRecycleFiles(ctx, path, dryRun)
+}
+
 // ListClusters returns a sorted summary of every configured cluster.
 // Does NOT touch kubernetes — purely from config.
 func (h *Handler) ListClusters() []ClusterSummary {

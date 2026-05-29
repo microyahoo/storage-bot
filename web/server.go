@@ -323,7 +323,8 @@ func indexByte(s string, b byte) int {
 }
 
 // handleStorageRoutes dispatches /storages/<name>, /storages/<name>/info,
-// /storages/<name>/health, /storages/<name>/quotas, /storages/<name>/user (POST).
+// /storages/<name>/health, /storages/<name>/quotas, /storages/<name>/user (POST),
+// /storages/<name>/recycles (GET list / GET ?path= files / POST clear).
 func (s *Server) handleStorageRoutes(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path[len("/storages/"):]
 	var name, action string
@@ -373,6 +374,8 @@ func (s *Server) handleStorageRoutes(w http.ResponseWriter, r *http.Request) {
 		})
 	case "user":
 		s.renderStorageUser(w, r, summary)
+	case "recycles":
+		s.renderStorageRecycles(w, r, summary)
 	default:
 		http.NotFound(w, r)
 	}
@@ -495,4 +498,60 @@ func outputData(summary bot.RESTStorageSummary, label, output, errMsg string) an
 		Error:    errMsg,
 		BackURL:  "/storages/" + summary.Name,
 	}
+}
+
+// renderStorageRecycles drives the recycle-bin page. It has three modes:
+//
+//   GET  /storages/<name>/recycles                       → list every bin
+//   GET  /storages/<name>/recycles?path=/foo             → list files under /foo
+//   POST /storages/<name>/recycles (path, confirm=on)    → clear under /foo
+//
+// Real clear (confirm checked) is restricted by the storage layer to paths under
+// public_user_prefix / private_user_prefix. Without confirm, the backend returns
+// a dry-run preview.
+func (s *Server) renderStorageRecycles(w http.ResponseWriter, r *http.Request, summary bot.RESTStorageSummary) {
+	path := strings.TrimSpace(r.URL.Query().Get("path"))
+	if r.Method == http.MethodPost {
+		if err := r.ParseForm(); err != nil {
+			s.render(w, "storage_output.html", outputData(summary, "回收站清空", "", "parse form: "+err.Error()))
+			return
+		}
+		path = strings.TrimSpace(r.PostForm.Get("path"))
+		confirmed := r.PostForm.Get("confirm") == "on"
+		if path == "" {
+			s.render(w, "storage_output.html", outputData(summary, "回收站清空", "", "请填写 path"))
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
+		defer cancel()
+		out, err := s.handler.ClearStorageRecycle(ctx, summary.Name, path, !confirmed)
+		label := "回收站清空(" + path + ", dry-run)"
+		if confirmed {
+			label = "回收站清空(" + path + ", 真实)"
+		}
+		errMsg := ""
+		if err != nil {
+			errMsg = err.Error()
+		}
+		s.render(w, "storage_output.html", outputData(summary, label, out, errMsg))
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+	defer cancel()
+	if path == "" {
+		out, err := s.handler.GetStorageRecycles(ctx, summary.Name)
+		errMsg := ""
+		if err != nil {
+			errMsg = err.Error()
+		}
+		s.render(w, "storage_output.html", outputData(summary, "回收站列表", out, errMsg))
+		return
+	}
+	out, err := s.handler.GetStorageRecycleFiles(ctx, summary.Name, path)
+	errMsg := ""
+	if err != nil {
+		errMsg = err.Error()
+	}
+	s.render(w, "storage_output.html", outputData(summary, "回收站文件("+path+")", out, errMsg))
 }
