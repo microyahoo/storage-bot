@@ -10,7 +10,7 @@
 - **磁盘 IO 统计**：对指定集群或单个节点执行 `iostat`，输出原始统计数据
 - **Ceph Skill**：OSD / PG / Pool / 容量 / 慢请求 / Monitor / Crash / FSID / Mon IP 等一键查询
 - **Flag 操作**：set/unset nobackfill、norebalance、norecover、noout，支持单套、前缀批量、全量（含排除）
-- **REST 存储**：对接 Yanrong (yrfs) 云存储 REST API，支持集群信息、健康、配额列表、用户目录查询
+- **REST 存储**：对接 Yanrong (yrfs) 云存储 REST API，支持集群信息、健康、配额列表、用户目录查询、回收站（列出/查询/清空，清空默认 dry-run）
 - **Web 管理界面**：内置 HTTP 服务，可在浏览器查看已注册的集群、技能、节点和执行历史
 - **yrfsctl CLI**：独立命令行工具，不经过 bot 直接调用 Yanrong API 做调试
 - **配置热重载**：修改 config.yaml 或发送 SIGHUP，30 秒内自动生效，无需重启
@@ -200,7 +200,19 @@ yrfs01 usage /drtraining/user/liangzheng   # 精确路径
 yrfs01 user liangzheng              # 默认 private
 yrfs01 user liangzheng public
 yrfs01 用户 liangzheng 公共
+
+# 回收站
+yrfs01 recycles                                              # 列出全部回收站
+yrfs01 recycle files /public-data/user/liangzheng            # 列出该路径下回收站文件
+yrfs01 recycle clear /public-data/user/liangzheng/tmp        # dry-run，不真删
+yrfs01 recycle clear /public-data/user/liangzheng/tmp --yes  # 真实清空
 ```
+
+> ⚠️ **回收站真实清空的安全限制**
+> `recycle clear ... --yes` 仅允许路径在 `public_user_prefix` 或 `private_user_prefix`
+> 之下（即「个人目录」内）；其他路径会被后端拒绝并报错。Dry-run（不带 `--yes`）
+> 不做此限制，可用于预览任意路径下将被删除的文件。
+> 未配置任何 `*_user_prefix` 时，所有真实清空都会被拒绝。
 
 也可以用 `yrfsctl` CLI 在终端直接调试，无需走飞书：
 
@@ -209,6 +221,12 @@ yrfsctl --config ./config.yaml --name yrfs01 info
 yrfsctl --name yrfs01 quota --path /drtraining/user/liangzheng
 yrfsctl --name yrfs01 quota --user liangzheng --scope private
 yrfsctl --base-url https://10.0.0.5 --username admin --password 'pw' health
+
+# 回收站
+yrfsctl --name yrfs01 recycles                                                # 列出全部回收站
+yrfsctl --name yrfs01 recycles --path /public-data/user/liangzheng            # 列出某路径下文件
+yrfsctl --name yrfs01 recycle-clear --path /public-data/user/liangzheng/tmp   # dry-run
+yrfsctl --name yrfs01 recycle-clear --path /public-data/user/liangzheng/tmp --yes  # 真实清空
 ```
 
 凭据优先级：`--base-url/--username/--password` 标志 > `YR_BASE_URL / YR_USERNAME / YR_PASSWORD` 环境变量 > config.yaml 的 `rest_storages[--name]`。

@@ -208,11 +208,13 @@ func (y *YanrongBackend) ListRecycleFiles(ctx context.Context, queryPath string,
 // ClearRecycleFiles permanently deletes all files under `queryPath` from the
 // recycle bin that owns it (chosen via the same longest-prefix rule as
 // ListRecycleFiles). The action endpoint is POST /api/v2/recycle/<id>/action
-// with a JSON body {"action":"clear","path":"<path>/"}.
+// with a JSON body {"action":"delete","path":"<path>/"}.
 //
-// If dryRun is true no request is sent — the function returns a description of
-// what *would* happen. This lets the CLI default to dry-run for a destructive
-// operation and only commit on explicit --yes.
+// Safety: when dryRun is false, queryPath MUST live strictly under a configured
+// user-prefix (public_user_prefix or private_user_prefix) — i.e. the path is
+// `<prefix>/<user>` or deeper. This prevents accidental wipes of shared roots
+// like `/public-data/` or arbitrary cluster directories. Dry-run skips the
+// guard so operators can preview what would happen against any path.
 //
 // Returns a short status string on success.
 func (y *YanrongBackend) ClearRecycleFiles(ctx context.Context, queryPath string, dryRun bool) (string, error) {
@@ -230,6 +232,12 @@ func (y *YanrongBackend) ClearRecycleFiles(ctx context.Context, queryPath string
 		return "", fmt.Errorf("no recycle bin covers path %q (scanned %d entries)", queryPath, len(recycles))
 	}
 
+	if !dryRun {
+		if err := y.checkUserDirPath(cleaned); err != nil {
+			return "", err
+		}
+	}
+
 	// Same trailing-slash rule as ListRecycleFiles: append "/" only in the API
 	// value, leave the caller's queryPath untouched.
 	apiPath := queryPath
@@ -245,7 +253,7 @@ func (y *YanrongBackend) ClearRecycleFiles(ctx context.Context, queryPath string
 
 	if dryRun {
 		return fmt.Sprintf(
-			"🧪 dry-run · 将清空 recycle #%d (path=%s) 下的 %s\n   POST %s\n   body=%v\n   (实际未执行，加 --yes 才会发起请求)",
+			"🧪 dry-run · 将清空 recycle #%d (path=%s) 下的 %s\n   POST %s\n   body=%v\n   (实际未执行)",
 			match.ID, match.Path, apiPath, endpoint, body,
 		), nil
 	}
@@ -256,6 +264,48 @@ func (y *YanrongBackend) ClearRecycleFiles(ctx context.Context, queryPath string
 	}
 	return fmt.Sprintf("🧹 已清空 recycle #%d (path=%s) 下的 %s\n%s",
 		match.ID, match.Path, apiPath, raw), nil
+}
+
+// checkUserDirPath enforces the safety rule for destructive recycle operations:
+// the (already-normalized) target path must be strictly under a configured
+// user-prefix. "Strictly under" means at least one component deeper than the
+// prefix itself — so `<prefix>` alone is rejected, but `<prefix>/<user>` and
+// `<prefix>/<user>/anything` are allowed. If no prefixes are configured the
+// call is refused outright.
+func (y *YanrongBackend) checkUserDirPath(cleaned string) error {
+	pubPrefix := normalizeQuotaPath(y.publicUserPrefix)
+	privPrefix := normalizeQuotaPath(y.privateUserPrefix)
+	hasPub := y.publicUserPrefix != ""
+	hasPriv := y.privateUserPrefix != ""
+	if !hasPub && !hasPriv {
+		return fmt.Errorf("refusing destructive op: no public/private user_prefix configured on storage %q", y.name)
+	}
+
+	if hasPriv && pathStrictlyUnder(cleaned, privPrefix) {
+		return nil
+	}
+	if hasPub && pathStrictlyUnder(cleaned, pubPrefix) {
+		return nil
+	}
+
+	var allowed []string
+	if hasPriv {
+		allowed = append(allowed, fmt.Sprintf("private=%s/<user>/...", privPrefix))
+	}
+	if hasPub {
+		allowed = append(allowed, fmt.Sprintf("public=%s/<user>/...", pubPrefix))
+	}
+	return fmt.Errorf("refusing to clear %q: path must live under a user directory (%s)", cleaned, strings.Join(allowed, " or "))
+}
+
+// pathStrictlyUnder reports whether `p` is at least one component deeper than
+// `prefix`. Equal-to-prefix returns false (that's the prefix itself, not a
+// user dir).
+func pathStrictlyUnder(p, prefix string) bool {
+	if !pathHasPrefix(p, prefix) {
+		return false
+	}
+	return normalizeQuotaPath(p) != normalizeQuotaPath(prefix)
 }
 
 // pickRecycleForPath returns the recycle whose Path is the longest prefix of

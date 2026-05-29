@@ -74,6 +74,31 @@ func (s *RESTSkill) DirUsageForUser(ctx context.Context, user, scope string) (st
 	return yb.DirUsageForUser(ctx, user, scope)
 }
 
+// ListRecycles / ListRecycleFiles / ClearRecycleFiles only work against Yanrong backends.
+func (s *RESTSkill) ListRecycles(ctx context.Context) (string, error) {
+	yb, ok := s.backend.(*YanrongBackend)
+	if !ok {
+		return "", fmt.Errorf("backend %q does not support recycle listing", s.backend.Type())
+	}
+	return yb.ListRecycles(ctx)
+}
+
+func (s *RESTSkill) ListRecycleFiles(ctx context.Context, queryPath string, size int) (string, error) {
+	yb, ok := s.backend.(*YanrongBackend)
+	if !ok {
+		return "", fmt.Errorf("backend %q does not support recycle-file listing", s.backend.Type())
+	}
+	return yb.ListRecycleFiles(ctx, queryPath, size)
+}
+
+func (s *RESTSkill) ClearRecycleFiles(ctx context.Context, queryPath string, dryRun bool) (string, error) {
+	yb, ok := s.backend.(*YanrongBackend)
+	if !ok {
+		return "", fmt.Errorf("backend %q does not support recycle clear", s.backend.Type())
+	}
+	return yb.ClearRecycleFiles(ctx, queryPath, dryRun)
+}
+
 // QueryResult bundles raw output and an optional path that was queried.
 type QueryResult struct {
 	Output string
@@ -106,6 +131,45 @@ func (s *RESTSkill) Query(ctx context.Context, action string) (QueryResult, erro
 		}
 		out, err := yb.ListQuotas(ctx)
 		return QueryResult{Output: out, Label: "配额列表"}, err
+
+	case strings.Contains(lower, "recycle") || strings.Contains(lower, "回收站"):
+		yb, ok := s.backend.(*YanrongBackend)
+		if !ok {
+			return QueryResult{}, fmt.Errorf("backend %q does not support recycle ops", s.backend.Type())
+		}
+		// Sub-actions: clear (destructive), files / list (read), bare (list bins).
+		// Confirmation tokens for clear: --yes / yes / confirm / 确认 / 真实.
+		switch {
+		case strings.Contains(lower, "clear") || strings.Contains(lower, "清空") || strings.Contains(lower, "删除"):
+			p := extractRecyclePath(raw)
+			if p == "" {
+				return QueryResult{Output: "📝 用法：`recycle clear <path> [--yes]`，未带 `--yes` 时为 dry-run；真实执行仅允许公共/私有个人目录下的路径", Label: "回收站清空"}, nil
+			}
+			confirmed := hasConfirmToken(lower)
+			out, err := yb.ClearRecycleFiles(ctx, p, !confirmed)
+			label := fmt.Sprintf("回收站清空(%s, dry-run)", p)
+			if confirmed {
+				label = fmt.Sprintf("回收站清空(%s, 真实)", p)
+			}
+			return QueryResult{Output: out, Label: label}, err
+
+		case strings.Contains(lower, "file") || strings.Contains(lower, "文件") || strings.Contains(lower, "list"):
+			p := extractRecyclePath(raw)
+			if p == "" {
+				return QueryResult{Output: "📝 用法：`recycle files <path>` 列出指定路径下回收站文件", Label: "回收站文件"}, nil
+			}
+			out, err := yb.ListRecycleFiles(ctx, p, 0)
+			return QueryResult{Output: out, Label: fmt.Sprintf("回收站文件(%s)", p)}, err
+
+		default:
+			// Bare "recycles" — also accept positional <path> as a shortcut to list files.
+			if p := extractRecyclePath(raw); p != "" {
+				out, err := yb.ListRecycleFiles(ctx, p, 0)
+				return QueryResult{Output: out, Label: fmt.Sprintf("回收站文件(%s)", p)}, err
+			}
+			out, err := yb.ListRecycles(ctx)
+			return QueryResult{Output: out, Label: "回收站列表"}, err
+		}
 
 	case strings.HasPrefix(lower, "user") || strings.HasPrefix(lower, "用户") ||
 		strings.HasPrefix(lower, "private") || strings.HasPrefix(lower, "public") ||
@@ -174,4 +238,27 @@ func parseUserScope(s string) (user, scope string) {
 		}
 	}
 	return user, scope
+}
+
+// extractRecyclePath returns the first token that looks like an absolute path
+// (starts with "/"), ignoring recycle command keywords. Used by the chat
+// surface; flag-like tokens (--yes, etc.) are skipped.
+func extractRecyclePath(s string) string {
+	for _, f := range strings.Fields(s) {
+		if strings.HasPrefix(f, "/") {
+			return f
+		}
+	}
+	return ""
+}
+
+// hasConfirmToken reports whether the message contains an explicit "really do it"
+// signal. Without one, clear ops stay in dry-run.
+func hasConfirmToken(lower string) bool {
+	for _, t := range []string{"--yes", " yes", "confirm", "确认", "真实", "真的"} {
+		if strings.Contains(lower, t) {
+			return true
+		}
+	}
+	return false
 }

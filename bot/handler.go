@@ -358,7 +358,12 @@ func (h *Handler) helpMessage() string {
 		"- 配额列表：`yrfs01 quotas`\n" +
 		"- 精确路径：`yrfs01 usage /drtraining/user/liangzheng`\n" +
 		"- 用户目录：`yrfs01 user liangzheng`（默认 private）\n" +
-		"  - 公共目录：`yrfs01 user liangzheng public`\n\n" +
+		"  - 公共目录：`yrfs01 user liangzheng public`\n" +
+		"- 回收站列表：`yrfs01 recycles`\n" +
+		"- 回收站文件：`yrfs01 recycle files /public-data/user/xxx`\n" +
+		"- 清空回收站：`yrfs01 recycle clear /public-data/user/xxx`（默认 dry-run）\n" +
+		"  - 真实清空：`yrfs01 recycle clear /public-data/user/xxx --yes`\n" +
+		"  - ⚠️ `--yes` 仅允许 **公共/私有个人目录** 下的路径，其他路径会被拒绝\n\n" +
 		"**💡 示例**\n" +
 		"```\n" +
 		"@bot 帮我看看cluster-01的状态\n" +
@@ -368,6 +373,8 @@ func (h *Handler) helpMessage() string {
 		"@bot optimize rgw cluster-01 max=100\n" +
 		"@bot yrfs01 user liangzheng private\n" +
 		"@bot yrfs01 quotas\n" +
+		"@bot yrfs01 recycles\n" +
+		"@bot yrfs01 recycle clear /public-data/user/liangzheng/tmp --yes\n" +
 		"```"
 }
 

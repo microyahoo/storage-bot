@@ -116,3 +116,84 @@ func TestPickRecycleForPath_NoMatch(t *testing.T) {
 		t.Errorf("expected no match for /random/path against non-root recycles")
 	}
 }
+
+func TestPathStrictlyUnder(t *testing.T) {
+	cases := []struct {
+		p, prefix string
+		want      bool
+	}{
+		{"/a/b", "/a", true},          // one component deeper
+		{"/a/b/c", "/a", true},        // deeper
+		{"/a", "/a", false},           // prefix itself — strict means not equal
+		{"/", "/a", false},            // outside
+		{"/ab", "/a", false},          // component-boundary: /ab is not under /a
+		{"/x/a/b", "/a", false},       // unrelated
+		{"/a//b/../c", "/a", true},    // dirty input normalizes
+	}
+	for _, c := range cases {
+		if got := pathStrictlyUnder(c.p, c.prefix); got != c.want {
+			t.Errorf("pathStrictlyUnder(%q, %q) = %v, want %v", c.p, c.prefix, got, c.want)
+		}
+	}
+}
+
+func TestCheckUserDirPath(t *testing.T) {
+	const (
+		priv = "/private-data/user"
+		pub  = "/public-data/user"
+	)
+
+	t.Run("under private OK", func(t *testing.T) {
+		y := &YanrongBackend{name: "yrfs", privateUserPrefix: priv}
+		if err := y.checkUserDirPath("/private-data/user/alice"); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if err := y.checkUserDirPath("/private-data/user/alice/sub/dir"); err != nil {
+			t.Errorf("unexpected error for deeper path: %v", err)
+		}
+	})
+
+	t.Run("under public OK", func(t *testing.T) {
+		y := &YanrongBackend{name: "yrfs", publicUserPrefix: pub}
+		if err := y.checkUserDirPath("/public-data/user/bob"); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("prefix itself rejected", func(t *testing.T) {
+		y := &YanrongBackend{name: "yrfs", privateUserPrefix: priv, publicUserPrefix: pub}
+		if err := y.checkUserDirPath(priv); err == nil {
+			t.Errorf("expected rejection of prefix itself %q", priv)
+		}
+		if err := y.checkUserDirPath(pub); err == nil {
+			t.Errorf("expected rejection of prefix itself %q", pub)
+		}
+	})
+
+	t.Run("outside both prefixes rejected", func(t *testing.T) {
+		y := &YanrongBackend{name: "yrfs", privateUserPrefix: priv, publicUserPrefix: pub}
+		if err := y.checkUserDirPath("/random/path"); err == nil {
+			t.Errorf("expected rejection of /random/path")
+		}
+		if err := y.checkUserDirPath("/"); err == nil {
+			t.Errorf("expected rejection of /")
+		}
+	})
+
+	t.Run("no prefixes configured refuses everything", func(t *testing.T) {
+		y := &YanrongBackend{name: "yrfs"} // both prefixes empty
+		if err := y.checkUserDirPath("/anything/at/all"); err == nil {
+			t.Errorf("expected rejection when no prefixes are configured")
+		}
+	})
+
+	t.Run("only one prefix configured", func(t *testing.T) {
+		y := &YanrongBackend{name: "yrfs", privateUserPrefix: priv} // no public
+		if err := y.checkUserDirPath("/private-data/user/alice"); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if err := y.checkUserDirPath("/public-data/user/bob"); err == nil {
+			t.Errorf("expected rejection of public path when public_user_prefix is empty")
+		}
+	})
+}
