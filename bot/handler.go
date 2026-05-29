@@ -119,8 +119,9 @@ func (h *Handler) HandleMessage(ctx context.Context, event *larkim.P2MessageRece
 	}
 
 	// Ignore @all messages in group chats — only respond to direct @bot mentions.
+	// p2p chats are always handled (no @-mention required there).
 	if msg.ChatType != nil && *msg.ChatType == "group" {
-		if !isBotMentioned(msg.Mentions) {
+		if !isBotMentioned(text, msg.Mentions) {
 			slog.Info("ignoring @all message in group", "text", text)
 			return nil
 		}
@@ -770,13 +771,19 @@ func filterNodes(nodes []config.SSHNode, nameHint string) []config.SSHNode {
 	return result
 }
 
-// isBotMentioned checks if the bot was explicitly mentioned (not just @all).
-// Returns true if mentions is empty (p2p chat) or contains a specific user mention.
-// Returns false if the only mention is @all. Feishu reports @all with key
-// "@_all" (and historically "_all"/"all"); accept all three to be safe.
-func isBotMentioned(mentions []*larkim.MentionEvent) bool {
+// isBotMentioned reports whether the bot was explicitly @-mentioned in a group
+// chat. The caller only invokes this for ChatType=="group", so an empty
+// mentions array means "@所有人 / 普通群消息" — NOT "p2p", and must return
+// false. Feishu reports @all with key "@_all" (and historically "_all"/"all");
+// any of those are treated as @all and skipped when scanning for a real mention.
+func isBotMentioned(text string, mentions []*larkim.MentionEvent) bool {
+	for _, tok := range []string{"@_all ", " @_all", "@_all"} {
+		if strings.HasPrefix(text, tok) {
+			return false
+		}
+	}
 	if len(mentions) == 0 {
-		return true // p2p chat or no mentions
+		return false // group message with no mentions → ignore (e.g. @所有人)
 	}
 	for _, m := range mentions {
 		if m.Key == nil {

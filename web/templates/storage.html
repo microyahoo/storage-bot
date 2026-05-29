@@ -1,76 +1,129 @@
 {{define "storage-content"}}
-<div class="card">
-  <h2>{{.Storage.Name}} — 概览</h2>
-  <table>
-    <tr><th style="width:160px">类型</th><td><span class="badge ok">{{.Storage.Type}}</span></td></tr>
-    <tr><th>Base URL</th><td><code>{{.Storage.BaseURL}}</code></td></tr>
-    <tr><th>Private 用户前缀</th><td>{{if .Storage.PrivateUserPrefix}}<code>{{.Storage.PrivateUserPrefix}}</code>{{else}}<span class="muted">未配置</span>{{end}}</td></tr>
-    <tr><th>Public 用户前缀</th><td>{{if .Storage.PublicUserPrefix}}<code>{{.Storage.PublicUserPrefix}}</code>{{else}}<span class="muted">未配置</span>{{end}}</td></tr>
-  </table>
-  <p style="margin-top:14px">
-    <a href="/storages/{{.Storage.Name}}/info">集群信息 →</a> &nbsp;·&nbsp;
-    <a href="/storages/{{.Storage.Name}}/health">健康检查 →</a> &nbsp;·&nbsp;
-    <a href="/storages/{{.Storage.Name}}/quotas">配额列表 →</a> &nbsp;·&nbsp;
-    <a href="/storages/{{.Storage.Name}}/user">用户/路径查询 →</a> &nbsp;·&nbsp;
-    <a href="/storages/{{.Storage.Name}}/recycles">回收站列表 →</a>
-  </p>
+<div class="mb-5 flex items-center gap-2 text-xs text-mute">
+  <a href="/" class="hover:text-slate-100">集群</a>
+  <span>/</span>
+  <span class="text-slate-200">{{.Storage.Name}}</span>
 </div>
+
+<section class="bg-ink-800 border border-line rounded-lg mb-6 overflow-hidden">
+  <div class="px-5 py-4 border-b border-line flex items-center justify-between gap-4">
+    <div>
+      <h2 class="text-base font-semibold text-slate-50 m-0">{{.Storage.Name}}</h2>
+      <p class="text-xs text-mute mt-1 m-0">焱融 (yrfs) 存储概览</p>
+    </div>
+    <span class="inline-block px-2.5 py-1 rounded-full bg-brand-500/15 text-brand-400 text-[11px] font-semibold uppercase">{{.Storage.Type}}</span>
+  </div>
+
+  <dl class="grid grid-cols-1 md:grid-cols-2 gap-px bg-line">
+    <div class="bg-ink-800 px-5 py-3">
+      <dt class="text-[11px] text-mute uppercase tracking-wider">Base URL</dt>
+      <dd class="text-sm mt-1"><code>{{.Storage.BaseURL}}</code></dd>
+    </div>
+    <div class="bg-ink-800 px-5 py-3">
+      <dt class="text-[11px] text-mute uppercase tracking-wider">类型</dt>
+      <dd class="text-sm mt-1 text-slate-200">{{.Storage.Type}}</dd>
+    </div>
+    <div class="bg-ink-800 px-5 py-3">
+      <dt class="text-[11px] text-mute uppercase tracking-wider">Private 用户前缀</dt>
+      <dd class="text-sm mt-1">{{if .Storage.PrivateUserPrefix}}<code>{{.Storage.PrivateUserPrefix}}</code>{{else}}<span class="text-mute">未配置</span>{{end}}</dd>
+    </div>
+    <div class="bg-ink-800 px-5 py-3">
+      <dt class="text-[11px] text-mute uppercase tracking-wider">Public 用户前缀</dt>
+      <dd class="text-sm mt-1">{{if .Storage.PublicUserPrefix}}<code>{{.Storage.PublicUserPrefix}}</code>{{else}}<span class="text-mute">未配置</span>{{end}}</dd>
+    </div>
+  </dl>
+
+  <div class="px-5 py-3 border-t border-line bg-ink-900/40 flex flex-wrap gap-2">
+    <a href="/storages/{{.Storage.Name}}/info"     class="inline-flex items-center px-3 py-1.5 rounded-md bg-ink-700 hover:bg-ink-600 text-slate-200 hover:!no-underline text-[13px]">集群信息</a>
+    <a href="/storages/{{.Storage.Name}}/health"   class="inline-flex items-center px-3 py-1.5 rounded-md bg-ink-700 hover:bg-ink-600 text-slate-200 hover:!no-underline text-[13px]">健康检查</a>
+    <a href="/storages/{{.Storage.Name}}/quotas"   class="inline-flex items-center px-3 py-1.5 rounded-md bg-ink-700 hover:bg-ink-600 text-slate-200 hover:!no-underline text-[13px]">配额列表</a>
+    <a href="/storages/{{.Storage.Name}}/user"     class="inline-flex items-center px-3 py-1.5 rounded-md bg-ink-700 hover:bg-ink-600 text-slate-200 hover:!no-underline text-[13px]">用户/路径查询</a>
+    <a href="/storages/{{.Storage.Name}}/recycles" class="inline-flex items-center px-3 py-1.5 rounded-md bg-ink-700 hover:bg-ink-600 text-slate-200 hover:!no-underline text-[13px]">回收站列表</a>
+  </div>
+</section>
 
 {{if .ShowForm}}
-<div class="card">
-  <h2>用户 / 路径查询</h2>
-  {{if .Error}}<div class="err-msg">{{.Error}}</div>{{end}}
-  <form method="post" action="/storages/{{.Storage.Name}}/user">
-    <div><label>用户名（短名，按前缀拼接）</label>
-      <input type="text" name="user" value="{{.User}}" placeholder="liangzheng"></div>
-    <div><label>Scope</label>
-      <select name="scope">
-        <option value="private" {{if eq .Scope "private"}}selected{{end}}>private</option>
-        <option value="public" {{if eq .Scope "public"}}selected{{end}}>public</option>
-      </select>
-    </div>
-    <div><label>或精确路径</label>
-      <input type="text" name="path" value="{{.Path}}" placeholder="/drtraining/user/liangzheng"></div>
-    <div><button type="submit">查询</button></div>
-  </form>
-  <p class="muted" style="margin-top:10px">填 user 时会用 {scope}_user_prefix 自动拼接路径；填 path 时优先用 path 精确查找。</p>
+<section class="bg-ink-800 border border-line rounded-lg mb-6 overflow-hidden">
+  <div class="px-5 py-4 border-b border-line">
+    <h2 class="text-sm font-semibold text-slate-100 m-0">用户 / 路径查询</h2>
+    <p class="text-xs text-mute mt-1 m-0">填 user 用 <code>{scope}_user_prefix</code> 拼接路径；填 path 优先精确查找。</p>
+  </div>
+  <div class="p-5">
+    {{if .Error}}<div class="err-msg">{{.Error}}</div>{{end}}
+    <form method="post" action="/storages/{{.Storage.Name}}/user" class="grid grid-cols-1 md:grid-cols-[1fr_140px_1.5fr_auto] gap-3 items-end">
+      <div>
+        <label>用户名（短名）</label>
+        <input type="text" name="user" value="{{.User}}" placeholder="liangzheng" class="w-full">
+      </div>
+      <div>
+        <label>Scope</label>
+        <select name="scope" class="w-full">
+          <option value="private" {{if eq .Scope "private"}}selected{{end}}>private</option>
+          <option value="public"  {{if eq .Scope "public"}}selected{{end}}>public</option>
+        </select>
+      </div>
+      <div>
+        <label>或精确路径</label>
+        <input type="text" name="path" value="{{.Path}}" placeholder="/drtraining/user/liangzheng" class="w-full">
+      </div>
+      <div><button type="submit" class="btn btn-primary">查询</button></div>
+    </form>
 
-  {{if .Executed}}
-  <h2 style="margin-top:18px">结果</h2>
-  <pre>{{.Output}}</pre>
-  {{end}}
-</div>
+    {{if .Executed}}
+    <div class="mt-5 pt-5 border-t border-line">
+      <div class="text-[11px] text-mute uppercase tracking-wider mb-2">结果</div>
+      <pre>{{.Output}}</pre>
+    </div>
+    {{end}}
+  </div>
+</section>
 {{end}}
 
-<div class="card">
-  <h2>回收站</h2>
-  <p class="muted" style="margin-top:0;margin-bottom:12px">
-    列出某路径下回收站文件（自动按最长前缀选 recycle bin）；或清空指定路径。
-  </p>
-  <form method="get" action="/storages/{{.Storage.Name}}/recycles" style="margin-bottom:14px">
-    <div><label>路径</label>
-      <input type="text" name="path" placeholder="/public-data/user/liangzheng" style="min-width:340px"></div>
-    <div><button type="submit">查询文件</button></div>
-    <div><a href="/storages/{{.Storage.Name}}/recycles" class="muted" style="display:inline-block;padding:8px 4px">列出所有回收站 →</a></div>
-  </form>
+<section class="bg-ink-800 border border-line rounded-lg overflow-hidden">
+  <div class="px-5 py-4 border-b border-line">
+    <h2 class="text-sm font-semibold text-slate-100 m-0">回收站</h2>
+    <p class="text-xs text-mute mt-1 m-0">按最长前缀自动选择 recycle bin；查询和清空都基于同一套匹配规则。</p>
+  </div>
 
-  <form method="post" action="/storages/{{.Storage.Name}}/recycles">
-    <div><label>清空路径</label>
-      <input type="text" name="path" placeholder="/public-data/user/liangzheng/tmp" style="min-width:340px"></div>
-    <div style="align-self:center">
-      <label style="display:inline-flex;align-items:center;gap:6px;color:var(--text);font-size:13px">
-        <input type="checkbox" name="confirm"> <span>真实清空（不勾选则 dry-run）</span>
-      </label>
+  <div class="p-5 border-b border-line">
+    <form method="get" action="/storages/{{.Storage.Name}}/recycles" class="grid grid-cols-1 md:grid-cols-[1fr_auto_auto] gap-3 items-end">
+      <div>
+        <label>路径</label>
+        <input type="text" name="path" placeholder="/public-data/user/liangzheng" class="w-full">
+      </div>
+      <div><button type="submit" class="btn btn-primary">查询文件</button></div>
+      <div>
+        <a href="/storages/{{.Storage.Name}}/recycles" class="btn btn-ghost hover:!no-underline">列出所有 bin</a>
+      </div>
+    </form>
+  </div>
+
+  <div class="p-5">
+    <div class="text-[11px] text-mute uppercase tracking-wider mb-3">⚠ 清空（默认 dry-run）</div>
+    <form method="post" action="/storages/{{.Storage.Name}}/recycles" class="grid grid-cols-1 md:grid-cols-[1fr_auto_auto] gap-3 items-end">
+      <div>
+        <label>清空路径</label>
+        <input type="text" name="path" placeholder="/public-data/user/liangzheng/tmp" class="w-full">
+      </div>
+      <div class="self-center pt-5">
+        <label class="inline-flex items-center gap-2 text-sm text-slate-200 m-0 cursor-pointer">
+          <input type="checkbox" name="confirm">
+          <span>真实清空</span>
+        </label>
+      </div>
+      <div><button type="submit" class="btn btn-danger">执行</button></div>
+    </form>
+
+    <div class="callout callout-warn mt-4">
+      <div class="font-semibold mb-1">真实清空仅限「个人目录」</div>
+      <div>勾选「真实清空」时，路径必须位于
+        {{if .Storage.PrivateUserPrefix}}<code class="bg-amber-500/10 px-1 rounded">{{.Storage.PrivateUserPrefix}}</code>{{else}}<span class="text-amber-300/70">private_user_prefix(未配置)</span>{{end}}
+        或
+        {{if .Storage.PublicUserPrefix}}<code class="bg-amber-500/10 px-1 rounded">{{.Storage.PublicUserPrefix}}</code>{{else}}<span class="text-amber-300/70">public_user_prefix(未配置)</span>{{end}}
+        之下；其他路径会被后端拒绝。Dry-run 不受此限制，可用于预览任意路径。
+      </div>
     </div>
-    <div><button type="submit" style="background:var(--err)">清空</button></div>
-  </form>
-  <p class="muted" style="margin-top:10px">
-    ⚠️ 勾选「真实清空」时，仅允许路径在
-    {{if .Storage.PrivateUserPrefix}}<code>{{.Storage.PrivateUserPrefix}}</code>{{else}}<span class="muted">private_user_prefix(未配置)</span>{{end}}
-    或
-    {{if .Storage.PublicUserPrefix}}<code>{{.Storage.PublicUserPrefix}}</code>{{else}}<span class="muted">public_user_prefix(未配置)</span>{{end}}
-    之下的「个人目录」；其他路径会被拒绝。
-  </p>
-</div>
+  </div>
+</section>
 {{end}}
 {{define "content"}}{{template "storage-content" .}}{{end}}

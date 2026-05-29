@@ -4,52 +4,95 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Storage Bot{{if .Title}} — {{.Title}}{{end}}</title>
-<style>
-  :root { --bg:#0f1115; --card:#171a21; --line:#252a33; --text:#e8eaed; --muted:#8b94a4; --acc:#4f8cff; --ok:#39c172; --warn:#f5b942; --err:#ef4444; }
-  * { box-sizing:border-box; }
-  body { margin:0; font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--text); }
-  header { background:var(--card); border-bottom:1px solid var(--line); padding:14px 24px; display:flex; align-items:center; justify-content:space-between; }
-  header h1 { margin:0; font-size:16px; font-weight:600; }
-  header nav a { color:var(--muted); margin-left:18px; text-decoration:none; font-size:13px; }
-  header nav a:hover, header nav a.active { color:var(--text); }
-  main { padding:24px; max-width:1280px; margin:0 auto; }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:16px 20px; margin-bottom:18px; }
-  .card h2 { margin:0 0 12px; font-size:14px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px; }
-  table { width:100%; border-collapse:collapse; font-size:13px; }
-  th, td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--line); }
-  th { color:var(--muted); font-weight:500; font-size:12px; text-transform:uppercase; letter-spacing:0.5px; }
-  tr:last-child td { border-bottom:none; }
-  tr:hover td { background:rgba(255,255,255,0.02); }
-  a { color:var(--acc); text-decoration:none; }
-  a:hover { text-decoration:underline; }
-  .badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600; }
-  .badge.ok { background:rgba(57,193,114,0.15); color:var(--ok); }
-  .badge.warn { background:rgba(245,185,66,0.15); color:var(--warn); }
-  .badge.err { background:rgba(239,68,68,0.15); color:var(--err); }
-  .stat-row { display:flex; gap:18px; margin-bottom:18px; }
-  .stat { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:14px 20px; flex:1; }
-  .stat .label { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:0.5px; }
-  .stat .value { font-size:28px; font-weight:600; margin-top:4px; }
-  pre { background:#0a0c10; border:1px solid var(--line); border-radius:6px; padding:14px 16px; overflow:auto; font:12px/1.5 "SF Mono",Menlo,Consolas,monospace; max-height:600px; }
-  form { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; }
-  label { display:block; font-size:12px; color:var(--muted); margin-bottom:4px; }
-  select, input[type=text] { background:var(--bg); border:1px solid var(--line); color:var(--text); padding:7px 10px; border-radius:5px; font-size:13px; min-width:180px; }
-  button { background:var(--acc); border:none; color:white; padding:8px 18px; border-radius:5px; font-size:13px; font-weight:500; cursor:pointer; }
-  button:hover { background:#3a78ec; }
-  .muted { color:var(--muted); font-size:12px; }
-  .empty { color:var(--muted); padding:40px; text-align:center; font-size:13px; }
-  .err-msg { background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); color:var(--err); padding:10px 14px; border-radius:6px; margin-bottom:14px; font-size:13px; }
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          ink: { 950: '#0b0d12', 900: '#10131a', 800: '#161922', 700: '#1d212c', 600: '#252a36' },
+          line: '#262b37',
+          mute: '#8b94a4',
+          brand: { 400: '#6ea4ff', 500: '#4f8cff', 600: '#3a78ec' },
+        },
+        fontFamily: {
+          sans: ['-apple-system','BlinkMacSystemFont','"Segoe UI"','Roboto','"Helvetica Neue"','Arial','"PingFang SC"','"Microsoft YaHei"','sans-serif'],
+          mono: ['"SF Mono"','ui-monospace','Menlo','Consolas','monospace'],
+        },
+      },
+    },
+  }
+</script>
+<style type="text/tailwindcss">
+  @layer base {
+    body { @apply bg-ink-950 text-slate-100 font-sans text-sm leading-relaxed antialiased; }
+    a { @apply text-brand-500 no-underline hover:text-brand-400; }
+    pre { @apply bg-ink-950 border border-line rounded-md p-4 overflow-auto font-mono text-xs leading-relaxed max-h-[600px] text-slate-200; }
+    code { @apply font-mono text-[12.5px] text-slate-200; }
+    label { @apply block text-xs text-mute mb-1; }
+    input[type=text], select {
+      @apply bg-ink-900 border border-line rounded-md px-3 py-2 text-sm text-slate-100 placeholder:text-mute/60
+             focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500/40 transition;
+      min-width: 200px;
+    }
+    input[type=checkbox] { @apply accent-brand-500 w-4 h-4 align-middle; }
+  }
+
+  /* Compatibility shims — pages that haven't been migrated to utility-first
+     classes still use these names. New pages should prefer utilities. */
+  @layer components {
+    .card { @apply bg-ink-800 border border-line rounded-lg p-5 mb-5 shadow-sm; }
+    .card h2 { @apply m-0 mb-3 text-xs font-semibold text-mute uppercase tracking-wider; }
+
+    .table-wrap table { @apply w-full border-collapse text-[13px]; }
+    table th { @apply text-left px-3 py-3 text-[11px] font-medium text-mute uppercase tracking-wider border-b border-line; }
+    table td { @apply text-left px-3 py-3 border-b border-line text-slate-100; }
+    table tr:last-child td { @apply border-b-0; }
+    table tbody tr:hover td { @apply bg-white/[0.03]; }
+
+    .badge { @apply inline-block px-2 py-[2px] rounded-full text-[11px] font-semibold; }
+    .badge.ok { @apply bg-emerald-500/15 text-emerald-400; }
+    .badge.warn { @apply bg-amber-500/15 text-amber-400; }
+    .badge.err { @apply bg-rose-500/15 text-rose-400; }
+
+    .btn { @apply inline-flex items-center justify-center px-4 py-2 rounded-md text-sm font-medium transition cursor-pointer; }
+    .btn-primary { @apply bg-brand-500 text-white hover:bg-brand-600; }
+    .btn-danger  { @apply bg-rose-600 text-white hover:bg-rose-500; }
+    .btn-ghost   { @apply bg-transparent border border-line text-slate-200 hover:bg-ink-700; }
+    button { @apply btn btn-primary; }
+
+    .stat-row { @apply grid grid-cols-2 md:grid-cols-4 gap-4 mb-5; }
+    .stat { @apply bg-ink-800 border border-line rounded-lg px-5 py-4; }
+    .stat .label { @apply text-mute text-[11px] uppercase tracking-wider; }
+    .stat .value { @apply text-3xl font-semibold mt-1 text-slate-50; }
+
+    .muted { @apply text-mute text-xs; }
+    .empty { @apply text-mute py-12 text-center text-sm; }
+    .err-msg { @apply bg-rose-500/10 border border-rose-500/30 text-rose-300 px-4 py-3 rounded-md mb-3 text-[13px]; }
+
+    /* Form: keep flex behavior the older pages depend on. */
+    form { @apply flex flex-wrap gap-3 items-end; }
+
+    /* Callout — used in the new storage page for the safety notice. */
+    .callout { @apply rounded-md px-4 py-3 text-[13px] leading-relaxed border; }
+    .callout-warn { @apply bg-amber-500/[0.08] border-amber-500/30 text-amber-200; }
+  }
 </style>
 </head>
-<body>
-<header>
-  <h1>Storage Bot Admin</h1>
-  <nav>
-    <a href="/" {{if eq .Page "home"}}class="active"{{end}}>集群</a>
-    <a href="/skills" {{if eq .Page "skills"}}class="active"{{end}}>Skills</a>
-    <a href="/run" {{if eq .Page "run"}}class="active"{{end}}>执行</a>
-  </nav>
+<body class="min-h-screen">
+<header class="bg-ink-900/95 backdrop-blur border-b border-line sticky top-0 z-10">
+  <div class="max-w-[1280px] mx-auto px-6 py-3 flex items-center justify-between">
+    <a href="/" class="flex items-center gap-2 text-slate-100 hover:text-slate-100 hover:!no-underline">
+      <span class="inline-flex items-center justify-center w-7 h-7 rounded-md bg-brand-500/15 text-brand-400 font-bold">S</span>
+      <span class="font-semibold text-[15px]">Storage Bot</span>
+    </a>
+    <nav class="flex items-center gap-1">
+      <a href="/"        class="px-3 py-1.5 rounded-md text-[13px] {{if eq .Page "home"}}bg-ink-700 text-slate-100{{else}}text-mute hover:text-slate-100 hover:bg-ink-800{{end}}">集群</a>
+      <a href="/skills"  class="px-3 py-1.5 rounded-md text-[13px] {{if eq .Page "skills"}}bg-ink-700 text-slate-100{{else}}text-mute hover:text-slate-100 hover:bg-ink-800{{end}}">Skills</a>
+      <a href="/run"     class="px-3 py-1.5 rounded-md text-[13px] {{if eq .Page "run"}}bg-ink-700 text-slate-100{{else}}text-mute hover:text-slate-100 hover:bg-ink-800{{end}}">执行</a>
+    </nav>
+  </div>
 </header>
-<main>{{block "content" .}}{{end}}</main>
+<main class="max-w-[1280px] mx-auto px-6 py-6">{{block "content" .}}{{end}}</main>
 </body>
 </html>{{end}}

@@ -1,62 +1,119 @@
 {{define "home-content"}}
-<div class="stat-row">
-  <div class="stat"><div class="label">Ceph 集群</div><div class="value">{{len .Clusters}}</div></div>
-  <div class="stat"><div class="label">焱融存储</div><div class="value">{{len .Storages}}</div></div>
-  <div class="stat"><div class="label">Skills</div><div class="value">{{.SkillCount}}</div></div>
-  <div class="stat"><div class="label">LLM 状态</div><div class="value">{{if .LLMEnabled}}<span class="badge ok">已开启</span>{{else}}<span class="badge warn">已关闭</span>{{end}}</div></div>
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+  <div class="bg-ink-800 border border-line rounded-lg px-5 py-4">
+    <div class="text-mute text-[11px] uppercase tracking-wider">Ceph 集群</div>
+    <div class="text-3xl font-semibold mt-1 text-slate-50">{{len .Clusters}}</div>
+  </div>
+  <div class="bg-ink-800 border border-line rounded-lg px-5 py-4">
+    <div class="text-mute text-[11px] uppercase tracking-wider">焱融存储</div>
+    <div class="text-3xl font-semibold mt-1 text-slate-50">{{len .Storages}}</div>
+  </div>
+  <div class="bg-ink-800 border border-line rounded-lg px-5 py-4">
+    <div class="text-mute text-[11px] uppercase tracking-wider">Skills</div>
+    <div class="text-3xl font-semibold mt-1 text-slate-50">{{.SkillCount}}</div>
+  </div>
+  <div class="bg-ink-800 border border-line rounded-lg px-5 py-4">
+    <div class="text-mute text-[11px] uppercase tracking-wider">LLM</div>
+    <div class="mt-2">
+      {{if .LLMEnabled}}
+        <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-400 text-xs font-medium">
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>已开启
+        </span>
+      {{else}}
+        <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/15 text-amber-400 text-xs font-medium">
+          <span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span>已关闭
+        </span>
+      {{end}}
+    </div>
+  </div>
 </div>
 
-<div class="card">
-  <h2>Ceph 集群</h2>
+<section class="bg-ink-800 border border-line rounded-lg mb-6 overflow-hidden">
+  <div class="px-5 py-4 border-b border-line flex items-center justify-between">
+    <h2 class="text-sm font-semibold text-slate-100 m-0">Ceph 集群</h2>
+    <span class="text-xs text-mute">{{len .Clusters}} 套</span>
+  </div>
   {{if .Clusters}}
-  <table>
-    <thead><tr><th>名称</th><th>Namespace</th><th>Gateway</th><th>操作</th></tr></thead>
-    <tbody>
-    {{range .Clusters}}
-      <tr>
-        <td><a href="/clusters/{{.Name}}">{{.Name}}</a></td>
-        <td>{{.Namespace}}</td>
-        <td>{{if .GatewayHost}}{{.GatewayHost}}{{else}}<span class="muted">-</span>{{end}}</td>
-        <td>
-          <a href="/clusters/{{.Name}}/nodes">节点</a> ·
-          <a href="/clusters/{{.Name}}/health">健康</a>
-        </td>
-      </tr>
-    {{end}}
-    </tbody>
-  </table>
+  <div class="overflow-x-auto">
+    <table class="w-full text-[13px]">
+      <thead>
+        <tr class="text-mute text-[11px] uppercase tracking-wider">
+          <th class="text-left px-5 py-3 font-medium">名称</th>
+          <th class="text-left px-5 py-3 font-medium">Namespace</th>
+          <th class="text-left px-5 py-3 font-medium">Gateway</th>
+          <th class="text-right px-5 py-3 font-medium">操作</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-line">
+        {{range .Clusters}}
+        <tr class="hover:bg-white/[0.03] transition">
+          <td class="px-5 py-3"><a href="/clusters/{{.Name}}" class="font-medium">{{.Name}}</a></td>
+          <td class="px-5 py-3 text-slate-300">{{.Namespace}}</td>
+          <td class="px-5 py-3">{{if .GatewayHost}}<code>{{.GatewayHost}}</code>{{else}}<span class="text-mute">—</span>{{end}}</td>
+          <td class="px-5 py-3 text-right space-x-3">
+            <a href="/clusters/{{.Name}}/nodes">节点</a>
+            <a href="/clusters/{{.Name}}/health">健康</a>
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
   {{else}}
-  <div class="empty">未配置任何 Ceph 集群</div>
+  <div class="py-12 text-center text-mute text-sm">未配置任何 Ceph 集群</div>
   {{end}}
-</div>
+</section>
 
-<div class="card">
-  <h2>焱融(yrfs) 存储</h2>
+<section class="bg-ink-800 border border-line rounded-lg overflow-hidden">
+  <div class="px-5 py-4 border-b border-line flex items-center justify-between">
+    <h2 class="text-sm font-semibold text-slate-100 m-0">焱融 (yrfs) 存储</h2>
+    <span class="text-xs text-mute">{{len .Storages}} 套</span>
+  </div>
   {{if .Storages}}
-  <table>
-    <thead><tr><th>名称</th><th>类型</th><th>Base URL</th><th>Private Prefix</th><th>Public Prefix</th><th>操作</th></tr></thead>
-    <tbody>
-    {{range .Storages}}
-      <tr>
-        <td><a href="/storages/{{.Name}}">{{.Name}}</a></td>
-        <td><span class="badge ok">{{.Type}}</span></td>
-        <td>{{.BaseURL}}</td>
-        <td>{{if .PrivateUserPrefix}}<code>{{.PrivateUserPrefix}}</code>{{else}}<span class="muted">-</span>{{end}}</td>
-        <td>{{if .PublicUserPrefix}}<code>{{.PublicUserPrefix}}</code>{{else}}<span class="muted">-</span>{{end}}</td>
-        <td>
-          <a href="/storages/{{.Name}}/info">信息</a> ·
-          <a href="/storages/{{.Name}}/health">健康</a> ·
-          <a href="/storages/{{.Name}}/quotas">配额</a> ·
-          <a href="/storages/{{.Name}}/user">用户</a>
-        </td>
-      </tr>
-    {{end}}
-    </tbody>
-  </table>
-  <div class="muted" style="margin-top:10px;">飞书消息示例：<code>@bot {{(index .Storages 0).Name}} quotas</code> · <code>@bot {{(index .Storages 0).Name}} user liangzheng private</code></div>
+  <div class="overflow-x-auto">
+    <table class="w-full text-[13px]">
+      <thead>
+        <tr class="text-mute text-[11px] uppercase tracking-wider">
+          <th class="text-left px-5 py-3 font-medium">名称</th>
+          <th class="text-left px-5 py-3 font-medium">类型</th>
+          <th class="text-left px-5 py-3 font-medium">Base URL</th>
+          <th class="text-left px-5 py-3 font-medium">Private Prefix</th>
+          <th class="text-left px-5 py-3 font-medium">Public Prefix</th>
+          <th class="text-right px-5 py-3 font-medium">操作</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-line">
+        {{range .Storages}}
+        <tr class="hover:bg-white/[0.03] transition">
+          <td class="px-5 py-3"><a href="/storages/{{.Name}}" class="font-medium">{{.Name}}</a></td>
+          <td class="px-5 py-3">
+            <span class="inline-block px-2 py-[2px] rounded-full bg-brand-500/15 text-brand-400 text-[11px] font-semibold uppercase">{{.Type}}</span>
+          </td>
+          <td class="px-5 py-3"><code class="text-slate-300">{{.BaseURL}}</code></td>
+          <td class="px-5 py-3">{{if .PrivateUserPrefix}}<code>{{.PrivateUserPrefix}}</code>{{else}}<span class="text-mute">—</span>{{end}}</td>
+          <td class="px-5 py-3">{{if .PublicUserPrefix}}<code>{{.PublicUserPrefix}}</code>{{else}}<span class="text-mute">—</span>{{end}}</td>
+          <td class="px-5 py-3 text-right space-x-3 whitespace-nowrap">
+            <a href="/storages/{{.Name}}/info">信息</a>
+            <a href="/storages/{{.Name}}/health">健康</a>
+            <a href="/storages/{{.Name}}/quotas">配额</a>
+            <a href="/storages/{{.Name}}/user">用户</a>
+            <a href="/storages/{{.Name}}/recycles">回收站</a>
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  <div class="px-5 py-3 border-t border-line bg-ink-900/40 text-xs text-mute">
+    飞书示例：<code class="text-slate-300">@bot {{(index .Storages 0).Name}} quotas</code>
+    &nbsp;·&nbsp;
+    <code class="text-slate-300">@bot {{(index .Storages 0).Name}} user liangzheng private</code>
+    &nbsp;·&nbsp;
+    <code class="text-slate-300">@bot {{(index .Storages 0).Name}} recycles</code>
+  </div>
   {{else}}
-  <div class="empty">未配置任何焱融存储</div>
+  <div class="py-12 text-center text-mute text-sm">未配置任何焱融存储</div>
   {{end}}
-</div>
+</section>
 {{end}}
 {{define "content"}}{{template "home-content" .}}{{end}}
