@@ -52,6 +52,7 @@ func NewRegistry() *Registry {
 	r.Register(&CapacityCheck{})
 	r.Register(&SlowOps{})
 	r.Register(&CrashReport{})
+	r.Register(&CrashInfo{})
 	r.Register(&MonStatus{})
 	r.Register(&IOStat{})
 	r.Register(&KernelLogs{})

@@ -80,6 +80,64 @@ func (s *CrashReport) Execute(sc *Context) (string, error) {
 	return runCephCommands(sc, commands)
 }
 
+// CrashInfo shows `ceph crash ls` and, if there is at least one entry, the full
+// `ceph crash info <id>` for the most recent crash. Saves a round-trip for
+// users who only care about the latest stack trace.
+type CrashInfo struct{}
+
+func (s *CrashInfo) Name() string        { return "crash_info" }
+func (s *CrashInfo) Description() string { return "列出 crash 并展示最近一条的完整信息" }
+func (s *CrashInfo) Execute(sc *Context) (string, error) {
+	if sc.KubeExec == nil {
+		return "", fmt.Errorf("no kubernetes connection available")
+	}
+
+	lsOut, err := sc.KubeExec.RunCephCommand(sc.Ctx, "crash", "ls")
+	if err != nil {
+		return fmt.Sprintf("📡 `ceph crash ls` ❌\n```\n%v\n```", err), nil
+	}
+
+	latest := latestCrashID(lsOut)
+	header := fmt.Sprintf("📡 `ceph crash ls`\n```\n%s\n```", strings.TrimRight(lsOut, "\n"))
+	if latest == "" {
+		return header + "\n\n✅ 没有发现 crash", nil
+	}
+
+	infoOut, err := sc.KubeExec.RunCephCommand(sc.Ctx, "crash", "info", latest)
+	if err != nil {
+		return fmt.Sprintf("%s\n\n📡 `ceph crash info %s` ❌\n```\n%v\n```", header, latest, err), nil
+	}
+	return fmt.Sprintf("%s\n\n📡 `ceph crash info %s`\n```\n%s\n```",
+		header, latest, strings.TrimRight(infoOut, "\n")), nil
+}
+
+// latestCrashID extracts the last crash ID from `ceph crash ls` output. Output
+// shape (sorted oldest-first):
+//
+//	ID                                                                ENTITY     NEW
+//	2024-01-02T12:34:56.789012Z_abc-def...                            osd.5      *
+//
+// We scan non-empty lines and return the first whitespace-delimited token of
+// the last data row — skipping the header row (which starts with "ID").
+func latestCrashID(out string) string {
+	var lastID string
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		if fields[0] == "ID" {
+			continue
+		}
+		lastID = fields[0]
+	}
+	return lastID
+}
+
 type MonStatus struct{}
 
 func (s *MonStatus) Name() string        { return "mon_status" }

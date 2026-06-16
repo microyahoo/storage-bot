@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -421,11 +422,37 @@ func (h *Handler) listSkills() string {
 	if len(skills) == 0 {
 		return "🚫 当前没有注册任何 Skill"
 	}
+	sort.Slice(skills, func(i, j int) bool { return skills[i].Name() < skills[j].Name() })
+
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("🧰 共 **%d** 个 Skill\n", len(skills)))
 	for _, s := range skills {
 		sb.WriteString(fmt.Sprintf("　🔧 `%s` — %s\n", s.Name(), s.Description()))
 	}
+
+	sb.WriteString("\n**💡 示例**\n")
+	sb.WriteString("```\n")
+	sb.WriteString("@bot osd cluster-01                              # osd_status\n")
+	sb.WriteString("@bot pg cluster-01                               # pg_status\n")
+	sb.WriteString("@bot pool cluster-01                             # pool_status\n")
+	sb.WriteString("@bot 容量 cluster-01                             # capacity\n")
+	sb.WriteString("@bot slow cluster-01                             # slow_ops\n")
+	sb.WriteString("@bot crash cluster-01                            # crash\n")
+	sb.WriteString("@bot crash info cluster-01                       # crash_info\n")
+	sb.WriteString("@bot mon cluster-01                              # mon_status\n")
+	sb.WriteString("@bot iostat cdn bd-cdn-node02                    # io_stat\n")
+	sb.WriteString("@bot kernel cdn bd-cdn-node02 keyword=link       # kernel_logs\n")
+	sb.WriteString("@bot nic cdn bd-cdn-node02                       # nic_info\n")
+	sb.WriteString("@bot bond cdn bd-cdn-node02                      # bond_status\n")
+	sb.WriteString("@bot list nodes cdn                              # list_nodes\n")
+	sb.WriteString("@bot fsid cluster-01                             # get_fsid\n")
+	sb.WriteString("@bot mon ip cluster-01                           # get_mon_ips\n")
+	sb.WriteString("@bot set nobackfill all except cdn-test          # set_no_backfill\n")
+	sb.WriteString("@bot unset nobackfill cluster-01                 # unset_no_backfill\n")
+	sb.WriteString("@bot set noout cluster-01                        # set_noout\n")
+	sb.WriteString("@bot unset noout cluster-01                      # unset_noout\n")
+	sb.WriteString("@bot optimize rgw cluster-01 max=100             # optimize_rgw_pg\n")
+	sb.WriteString("```")
 	return sb.String()
 }
 
