@@ -194,6 +194,173 @@ func (s *KernelLogs) Execute(sc *Context) (string, error) {
 	return strings.Join(results, "\n\n"), nil
 }
 
+type NICInfo struct{}
+
+func (s *NICInfo) Name() string        { return "nic_info" }
+func (s *NICInfo) Description() string { return "查看节点网卡信息（ip link show）" }
+func (s *NICInfo) Execute(sc *Context) (string, error) {
+	nodes, err := resolveNodes(sc.Nodes, sc.NodeName)
+	if err != nil {
+		return err.Error(), nil
+	}
+
+	var results []string
+	for _, node := range nodes {
+		sshNode := config.SSHNode{
+			Name:    node.Name,
+			Host:    node.Host,
+			User:    node.User,
+			KeyFile: node.KeyFile,
+		}
+		output, err := sc.RunOnNode(sshNode, "ip -br link show | grep -E 'lo|cali|tun|ipvs' -v")
+		if err != nil {
+			results = append(results, fmt.Sprintf("📌 **%s** ❌\n```\n%v```", node.Name, err))
+			continue
+		}
+		results = append(results, fmt.Sprintf("📌 **%s**\n```\n%s```", node.Name, output))
+	}
+	return strings.Join(results, "\n\n"), nil
+}
+
+// BondStatus enumerates /proc/net/bonding/bond* on each node and reports the
+// Link Failure Count per slave interface. A non-zero count usually means the
+// link has flapped — the headline signal users want from `cat /proc/net/bonding/bondN`.
+type BondStatus struct{}
+
+func (s *BondStatus) Name() string { return "bond_status" }
+func (s *BondStatus) Description() string {
+	return "查询节点所有 bond 网口的 Link Failure Count"
+}
+func (s *BondStatus) Execute(sc *Context) (string, error) {
+	nodes, err := resolveNodes(sc.Nodes, sc.NodeName)
+	if err != nil {
+		return err.Error(), nil
+	}
+
+	// Single grep across all bond files. parts[0] = "grep" → safe-list pass.
+	// `-H` prints "filename:line" so we can attribute counts back to each bond
+	// when the node has more than one. `2>/dev/null` swallows the "no such
+	// file" stderr if bonding isn't configured. The trailing `|| echo ...`
+	// keeps the output non-empty so users see *why* there's nothing to show.
+	cmd := "grep -H -E '^(Slave Interface|Link Failure Count|Bonding Mode|MII Status)' " +
+		"/proc/net/bonding/bond* 2>/dev/null || echo '(no bonds configured)'"
+
+	var results []string
+	for _, node := range nodes {
+		sshNode := config.SSHNode{
+			Name:    node.Name,
+			Host:    node.Host,
+			User:    node.User,
+			KeyFile: node.KeyFile,
+		}
+		output, err := sc.RunOnNode(sshNode, cmd)
+		if err != nil {
+			results = append(results, fmt.Sprintf("📌 **%s** ❌\n```\n%v\n```", node.Name, err))
+			continue
+		}
+		results = append(results, fmt.Sprintf("📌 **%s**\n%s", node.Name, formatBondReport(output)))
+	}
+	return strings.Join(results, "\n\n"), nil
+}
+
+// formatBondReport reshapes grep output of the form
+//
+//	/proc/net/bonding/bond0:Bonding Mode: IEEE 802.3ad ...
+//	/proc/net/bonding/bond0:Slave Interface: eth0
+//	/proc/net/bonding/bond0:MII Status: up
+//	/proc/net/bonding/bond0:Link Failure Count: 0
+//
+// into a per-bond grouped, slave-aligned table. Slaves with a non-zero
+// failure count get a ⚠ marker so they jump out.
+func formatBondReport(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "(no bonds configured)" {
+		return "```\n(no bonds configured)\n```"
+	}
+
+	type slave struct {
+		name      string
+		miiStatus string
+		failures  string
+	}
+	type bond struct {
+		name    string
+		mode    string
+		slaves  []*slave
+		current *slave
+	}
+
+	bondsByName := map[string]*bond{}
+	var order []string
+
+	for _, line := range strings.Split(raw, "\n") {
+		// Each line looks like "/proc/net/bonding/bondN:<key>: <value>"
+		colon := strings.Index(line, ":")
+		if colon < 0 {
+			continue
+		}
+		path := line[:colon]
+		body := strings.TrimSpace(line[colon+1:])
+		name := strings.TrimPrefix(path, "/proc/net/bonding/")
+
+		b, ok := bondsByName[name]
+		if !ok {
+			b = &bond{name: name}
+			bondsByName[name] = b
+			order = append(order, name)
+		}
+
+		key, val, found := strings.Cut(body, ":")
+		if !found {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		val = strings.TrimSpace(val)
+
+		switch key {
+		case "Bonding Mode":
+			b.mode = val
+		case "Slave Interface":
+			sl := &slave{name: val}
+			b.slaves = append(b.slaves, sl)
+			b.current = sl
+		case "MII Status":
+			if b.current != nil {
+				b.current.miiStatus = val
+			}
+		case "Link Failure Count":
+			if b.current != nil {
+				b.current.failures = val
+			}
+		}
+	}
+
+	var sb strings.Builder
+	sb.WriteString("```\n")
+	for _, name := range order {
+		b := bondsByName[name]
+		sb.WriteString(fmt.Sprintf("● %s", b.name))
+		if b.mode != "" {
+			sb.WriteString(fmt.Sprintf("  (mode: %s)", b.mode))
+		}
+		sb.WriteString("\n")
+		if len(b.slaves) == 0 {
+			sb.WriteString("    (no slaves)\n")
+			continue
+		}
+		for _, sl := range b.slaves {
+			marker := "  "
+			if sl.failures != "" && sl.failures != "0" {
+				marker = "⚠ "
+			}
+			sb.WriteString(fmt.Sprintf("    %s%-10s  MII=%-5s  Link Failure Count=%s\n",
+				marker, sl.name, sl.miiStatus, sl.failures))
+		}
+	}
+	sb.WriteString("```")
+	return sb.String()
+}
+
 type ListNodes struct{}
 
 func (s *ListNodes) Name() string { return "list_nodes" }

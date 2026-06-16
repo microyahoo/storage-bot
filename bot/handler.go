@@ -347,10 +347,12 @@ func (h *Handler) helpMessage() string {
 		"**💽 磁盘 IO**\n" +
 		"- 所有节点：`iostat cdn`\n" +
 		"- 指定节点：`iostat cdn bd-cdn-node02`\n\n" +
-		"**🐧 内核日志**（已过滤掉 systemd / kubelet 等非 kernel 行）\n" +
-		"- 默认最近 200 条：`kernel cdn bd-cdn-node02`\n" +
-		"- 指定条数：`kernel cdn bd-cdn-node02 n=500`\n" +
-		"- 指定关键字：`kernel cdn bd-cdn-node02 keyword=link`\n\n" +
+		"**🐧 节点诊断（kernel / 网卡 / bond）**\n" +
+		"- 内核日志（默认 200 条，已过滤 systemd/kubelet 等）：`kernel cdn bd-cdn-node02`\n" +
+		"  - 指定条数：`kernel cdn bd-cdn-node02 n=500`\n" +
+		"  - 指定关键字：`kernel cdn bd-cdn-node02 keyword=link`\n" +
+		"- 网卡列表（ip link）：`nic cdn bd-cdn-node02` / `网卡 cdn bd-cdn-node02`\n" +
+		"- Bond 状态（汇总每个 slave 的 Link Failure Count，非零标 ⚠）：`bond cdn bd-cdn-node02`\n\n" +
 		"**📈 RGW PG 优化**\n" +
 		"- `optimize rgw cluster-01`（默认 max=100）\n" +
 		"- `optimize rgw cluster-01 max=50`\n\n" +
@@ -591,6 +593,8 @@ var noAnalysisSkills = map[string]bool{
 	"unset_noout":       true,
 	"optimize_rgw_pg":   true,
 	"kernel_logs":       true,
+	"nic_info":          true,
+	"bond_status":       true,
 }
 
 func needsAnalysis(skillName string) bool {
