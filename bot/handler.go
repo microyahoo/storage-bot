@@ -347,6 +347,10 @@ func (h *Handler) helpMessage() string {
 		"**💽 磁盘 IO**\n" +
 		"- 所有节点：`iostat cdn`\n" +
 		"- 指定节点：`iostat cdn bd-cdn-node02`\n\n" +
+		"**🐧 内核日志**（已过滤掉 systemd / kubelet 等非 kernel 行）\n" +
+		"- 默认最近 200 条：`kernel cdn bd-cdn-node02`\n" +
+		"- 指定条数：`kernel cdn bd-cdn-node02 n=500`\n" +
+		"- 指定关键字：`kernel cdn bd-cdn-node02 keyword=link`\n\n" +
 		"**📈 RGW PG 优化**\n" +
 		"- `optimize rgw cluster-01`（默认 max=100）\n" +
 		"- `optimize rgw cluster-01 max=50`\n\n" +
@@ -370,6 +374,7 @@ func (h *Handler) helpMessage() string {
 		"@bot 帮我看看cluster-01的状态\n" +
 		"@bot 分析一下cluster-02的日志\n" +
 		"@bot iostat cdn bd-cdn-node02\n" +
+		"@bot kernel cdn bd-cdn-node02 keyword=link\n" +
 		"@bot set nobackfill all except cdn-test\n" +
 		"@bot optimize rgw cluster-01 max=100\n" +
 		"@bot yrfs01 user liangzheng private\n" +
@@ -585,6 +590,7 @@ var noAnalysisSkills = map[string]bool{
 	"set_noout":         true,
 	"unset_noout":       true,
 	"optimize_rgw_pg":   true,
+	"kernel_logs":       true,
 }
 
 func needsAnalysis(skillName string) bool {

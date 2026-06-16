@@ -114,6 +114,7 @@ func ParseWithAll(message string, knownClusters []string, knownSkills []string, 
 		{"crash", []string{"崩溃", "crash"}},
 		{"mon_status", []string{"仲裁", "monitor", "mon"}},
 		{"io_stat", []string{"磁盘io", "iostat", "io"}},
+		{"kernel_logs", []string{"kernel_logs", "kernel logs", "kernel日志", "kern日志", "内核日志", "kernel"}},
 		{"optimize_rgw_pg", []string{"optimize rgw", "rgw pg", "rgw pg优化", "upmap rgw", "优化rgw pg", "优化rgw存储池"}},
 	}
 	for _, entry := range skillAliasTable {
@@ -127,6 +128,15 @@ func ParseWithAll(message string, knownClusters []string, knownSkills []string, 
 				}
 				if entry.skill == "optimize_rgw_pg" {
 					action.Args = extractSkillArgs(lower, []string{"max"})
+				}
+				if entry.skill == "kernel_logs" {
+					action.Args = extractSkillArgs(lower, []string{"count", "n"})
+					if kw := extractKeyword(lower); kw != "" {
+						if action.Args == nil {
+							action.Args = map[string]string{}
+						}
+						action.Args["keyword"] = kw
+					}
 				}
 				return action
 			}
@@ -432,6 +442,26 @@ func extractSkillArgs(lower string, params []string) map[string]string {
 		}
 	}
 	return args
+}
+
+// extractKeyword pulls a free-text keyword out of the message for the
+// kernel_logs skill. Supports `keyword=X`, `keyword X`, `关键字 X`, `关键字=X`.
+// The captured token is alphanumeric (plus `_`/`-`/`.`/`:`) so it is safe to
+// inline into the remote shell pipeline.
+func extractKeyword(lower string) string {
+	patterns := []string{
+		`(?i)\bkeyword\s*=\s*([A-Za-z0-9_.:\-]+)`,
+		`(?i)\bkeyword\s+([A-Za-z0-9_.:\-]+)`,
+		`关键字\s*=\s*([A-Za-z0-9_.:\-]+)`,
+		`关键字\s+([A-Za-z0-9_.:\-]+)`,
+	}
+	for _, p := range patterns {
+		re := regexp.MustCompile(p)
+		if m := re.FindStringSubmatch(lower); len(m) > 1 {
+			return m[1]
+		}
+	}
+	return ""
 }
 
 func cleanJSONResponse(s string) string {

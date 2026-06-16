@@ -3,6 +3,8 @@ package skill
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -10,6 +12,10 @@ import (
 )
 
 const rgwBucketsDataSuffix = ".rgw.buckets.data"
+
+// kernelKeywordRe constrains the keyword we splice into the remote shell. The
+// intent parser already filters to this alphabet; this is a defensive recheck.
+var kernelKeywordRe = regexp.MustCompile(`^[A-Za-z0-9_.:\-]+$`)
 
 type OSDStatus struct{}
 
@@ -107,6 +113,83 @@ func (s *IOStat) Execute(sc *Context) (string, error) {
 		} else {
 			results = append(results, fmt.Sprintf("📌 **%s**\n```\n%s\n```", node.Name, output))
 		}
+	}
+	return strings.Join(results, "\n\n"), nil
+}
+
+type KernelLogs struct{}
+
+func (s *KernelLogs) Name() string { return "kernel_logs" }
+func (s *KernelLogs) Description() string {
+	return "查看节点 kernel 日志（过滤掉 systemd/kubelet 等无关行）"
+}
+func (s *KernelLogs) Execute(sc *Context) (string, error) {
+	nodes, err := resolveNodes(sc.Nodes, sc.NodeName)
+	if err != nil {
+		return err.Error(), nil
+	}
+
+	count := "200"
+	if v := strings.TrimSpace(sc.Args["count"]); v != "" {
+		count = v
+	} else if v := strings.TrimSpace(sc.Args["n"]); v != "" {
+		count = v
+	}
+	// guard count: digits only, otherwise it would get spliced into the remote
+	// shell command unchecked.
+	if _, err := strconv.Atoi(count); err != nil {
+		return fmt.Sprintf("🚫 count 必须是正整数：%q", count), nil
+	}
+
+	keyword := strings.TrimSpace(sc.Args["keyword"])
+	// keep keyword to alnum + a few harmless punctuation chars so it can be
+	// spliced into the shell pipeline without quoting tricks. The intent parser
+	// already restricts the alphabet; this is a belt-and-braces check.
+	if keyword != "" && !kernelKeywordRe.MatchString(keyword) {
+		return fmt.Sprintf("🚫 keyword 含非法字符：%q（只允许字母/数字/._:-）", keyword), nil
+	}
+
+	// The SSH validator inspects parts[0] of the command and rejects unknown
+	// leading tokens (so a leading `{` or `bash` would be blocked). Keep the
+	// command linear, starting with `journalctl`. The `||` fallback uses `grep`,
+	// which is also on the safe list, so the validator's metachar check is
+	// satisfied by parts[0] = "journalctl".
+	//
+	// Pipeline shape:
+	//   journalctl -k -n COUNT --no-pager 2>/dev/null | grep -i KEYWORD | tail -n COUNT
+	//     || grep ' kernel: ' /var/log/{messages,syslog} 2>/dev/null
+	//        | grep -i KEYWORD | tail -n COUNT
+	grepKw := ""
+	if keyword != "" {
+		grepKw = fmt.Sprintf(" | grep -i -- %s", keyword)
+	}
+	cmd := fmt.Sprintf(
+		"journalctl -k -n %[1]s --no-pager 2>/dev/null%[2]s | tail -n %[1]s "+
+			"|| grep -E ' kernel: ' /var/log/messages /var/log/syslog 2>/dev/null%[2]s | tail -n %[1]s",
+		count, grepKw,
+	)
+
+	var results []string
+	for _, node := range nodes {
+		sshNode := config.SSHNode{
+			Name:    node.Name,
+			Host:    node.Host,
+			User:    node.User,
+			KeyFile: node.KeyFile,
+		}
+		header := fmt.Sprintf("📌 **%s** · 最近 %s 条 kernel 日志", node.Name, count)
+		if keyword != "" {
+			header += fmt.Sprintf(" · 关键字 `%s`", keyword)
+		}
+		output, err := sc.RunOnNode(sshNode, cmd)
+		if err != nil {
+			results = append(results, fmt.Sprintf("%s ❌\n```\n%v\n```", header, err))
+			continue
+		}
+		if strings.TrimSpace(output) == "" {
+			output = "(无匹配)"
+		}
+		results = append(results, fmt.Sprintf("%s\n```\n%s\n```", header, output))
 	}
 	return strings.Join(results, "\n\n"), nil
 }
