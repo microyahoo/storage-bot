@@ -258,6 +258,8 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 		SelectedCluster string
 		SelectedNode    string
 		SelectedMax     string
+		SelectedCount   string
+		SelectedKeyword string
 		Executed        bool
 		Output          string
 		Error           string
@@ -267,6 +269,10 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 		Clusters:        clusters,
 		SelectedSkill:   r.URL.Query().Get("skill"),
 		SelectedCluster: r.URL.Query().Get("cluster"),
+		SelectedNode:    r.URL.Query().Get("node"),
+		SelectedMax:     r.URL.Query().Get("max"),
+		SelectedCount:   r.URL.Query().Get("count"),
+		SelectedKeyword: r.URL.Query().Get("keyword"),
 	}
 
 	if r.Method == http.MethodPost {
@@ -279,6 +285,8 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 		data.SelectedCluster = r.PostForm.Get("cluster")
 		data.SelectedNode = r.PostForm.Get("node")
 		data.SelectedMax = r.PostForm.Get("max")
+		data.SelectedCount = r.PostForm.Get("count")
+		data.SelectedKeyword = r.PostForm.Get("keyword")
 
 		if data.SelectedSkill == "" || data.SelectedCluster == "" {
 			data.Error = "请同时选择 skill 和 cluster"
@@ -298,6 +306,12 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 		args := map[string]string{}
 		if data.SelectedMax != "" {
 			args["max"] = data.SelectedMax
+		}
+		if data.SelectedCount != "" {
+			args["count"] = data.SelectedCount
+		}
+		if data.SelectedKeyword != "" {
+			args["keyword"] = data.SelectedKeyword
 		}
 
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)

@@ -23,10 +23,22 @@
     <div>
       <label>节点 (可选)</label>
       <input type="text" name="node" value="{{.SelectedNode}}" placeholder="node-1">
+      <p class="muted" style="margin-top:4px">磁盘 IO / 内核日志 / 网卡 / bond 等节点类 skill 需指定节点</p>
     </div>
     <div>
       <label>参数 max (可选)</label>
       <input type="text" name="max" value="{{.SelectedMax}}" placeholder="200">
+      <p class="muted" style="margin-top:4px">用于 <code>optimize_rgw_pg</code></p>
+    </div>
+    <div>
+      <label>参数 count (可选)</label>
+      <input type="text" name="count" value="{{.SelectedCount}}" placeholder="200">
+      <p class="muted" style="margin-top:4px">用于 <code>kernel_logs</code>，默认最近 200 条</p>
+    </div>
+    <div>
+      <label>参数 keyword (可选)</label>
+      <input type="text" name="keyword" value="{{.SelectedKeyword}}" placeholder="link">
+      <p class="muted" style="margin-top:4px">用于 <code>kernel_logs</code>，按关键字过滤 kernel 日志</p>
     </div>
     <div><button type="submit">执行</button></div>
   </form>

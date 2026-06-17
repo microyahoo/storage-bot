@@ -5,10 +5,19 @@
   <div class="err-msg">{{.Error}}</div>
   {{else if .Nodes}}
   <table>
-    <thead><tr><th>名称</th><th>Host</th></tr></thead>
+    <thead><tr><th>名称</th><th>Host</th><th style="width:300px">诊断</th></tr></thead>
     <tbody>
     {{range .Nodes}}
-      <tr><td>{{.Name}}</td><td>{{.Host}}</td></tr>
+      <tr>
+        <td>{{.Name}}</td>
+        <td>{{.Host}}</td>
+        <td>
+          <a href="/run?skill=io_stat&cluster={{$.ClusterName}}&node={{.Name}}">磁盘IO</a> ·
+          <a href="/run?skill=kernel_logs&cluster={{$.ClusterName}}&node={{.Name}}">内核日志</a> ·
+          <a href="/run?skill=nic_info&cluster={{$.ClusterName}}&node={{.Name}}">网卡</a> ·
+          <a href="/run?skill=bond_status&cluster={{$.ClusterName}}&node={{.Name}}">Bond</a>
+        </td>
+      </tr>
     {{end}}
     </tbody>
   </table>
