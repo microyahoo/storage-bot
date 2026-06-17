@@ -145,9 +145,11 @@ func (r *Runner) Run(ctx context.Context, clusterName string) (*Report, error)
 | 入口 | 接法 | 输出 |
 |---|---|---|
 | **cron** | `Scheduler` 定时 → `Runner.Run` → 按 `NotifyMinLevel` 决定是否 `RenderCard` 推 `NotifyChat` | 飞书卡片 + 落盘 |
-| **chat** | `intent/parser.go` 加「巡检 <集群>」意图 → `Runner.Run` → `RenderText` 回复 | 文本 + 落盘 |
+| **chat** | `intent/parser.go` 加巡检意图（触发词：`巡检`/`检查`/`体检` + 集群名，另支持「巡检所有集群」批量）→ `Runner.Run` → `RenderCard` 飞书卡片回复 | 飞书卡片 + 落盘 |
 | **web** | `web/` 加巡检页：集群列表 + 「立即巡检」按钮 + 历史报告列表 → 调 `Runner.Run` / `store.List` | HTML 页 |
 | **HTTP API** | `POST /api/inspect/{cluster}` → `Runner.Run` → JSON；`GET /api/inspect/{cluster}/history`。复用现有 Web Basic Auth 鉴权 | JSON |
+
+**批量巡检**：聊天「巡检所有集群」或定时 `Clusters` 为多个时，逐集群调 `Runner.Run`，**每个集群产出独立的一张卡片**（而非合并成一张），便于分别查看与告警归因。
 
 ## 6. 配置结构
 
@@ -229,8 +231,8 @@ type Report struct {
 
 func (r *Report) Counts() (ok, warn, crit int)
 func (r *Report) Abnormal() []Finding   // Warn 及以上，表格用
-func (r *Report) RenderText() string    // chat/API 的 Markdown 文本
-func (r *Report) RenderCard() *larkCard // 飞书卡片
+func (r *Report) RenderText() string    // API/降级用的 Markdown 文本
+func (r *Report) RenderCard() *larkCard // 飞书卡片（chat 触发与 cron 推送共用）
 ```
 
 ### 8.2 飞书卡片布局（已评审确认）
