@@ -72,8 +72,11 @@ func (hwDiskSmart) Inspect(ic *InspectContext) ([]Finding, error) {
 	var out []Finding
 	for _, name := range strings.Fields(list) {
 		dev := "/dev/" + name
+		// smartctl 对正常磁盘也常以非零退出码退出（退出码是状态位掩码），
+		// 但 SSHExecutor 在非零退出时仍返回有效 output，所以这里保留 raw、
+		// 忽略 err；只有当 output 为空时才用 err 文本兜底。
 		raw, e := ic.RunOnNode("smartctl -A -H " + dev + " 2>&1")
-		if e != nil {
+		if e != nil && raw == "" {
 			raw = e.Error()
 		}
 		f := parseSmart(dev, raw, ic.Thresholds.DiskLifeWarnPct, ic.Thresholds.DiskLifeCritPct)
