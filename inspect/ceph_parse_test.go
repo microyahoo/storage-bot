@@ -45,3 +45,47 @@ func TestParseCephDF(t *testing.T) {
 		t.Errorf("95%% → %v, want Critical", crit.Level)
 	}
 }
+
+func TestParseMonQuorum(t *testing.T) {
+	ok := `{"quorum":[0,1,2],"monmap":{"mons":[{"name":"a"},{"name":"b"},{"name":"c"}]}}`
+	if f := parseMonQuorum(ok); f.Level != LevelOK {
+		t.Errorf("3/3 quorum → %v, want OK", f.Level)
+	}
+	bad := `{"quorum":[0],"monmap":{"mons":[{"name":"a"},{"name":"b"},{"name":"c"}]}}`
+	if f := parseMonQuorum(bad); f.Level != LevelCritical {
+		t.Errorf("1/3 quorum → %v, want Critical", f.Level)
+	}
+	if f := parseMonQuorum("not json"); f.Level != LevelUnknown {
+		t.Errorf("bad json → %v, want Unknown", f.Level)
+	}
+}
+
+func TestParsePGStat(t *testing.T) {
+	if f := parsePGStat("100 pgs: 100 active+clean"); f.Level != LevelOK {
+		t.Errorf("active+clean → %v, want OK", f.Level)
+	}
+	if f := parsePGStat("90 active+clean, 10 active+undersized+degraded"); f.Level != LevelWarn {
+		t.Errorf("degraded → %v, want Warn", f.Level)
+	}
+	if f := parsePGStat("5 stale+inactive"); f.Level != LevelCritical {
+		t.Errorf("inactive → %v, want Critical", f.Level)
+	}
+}
+
+func TestParseSlowOps(t *testing.T) {
+	if f := parseSlowOps("HEALTH_WARN 3 slow ops, oldest one blocked"); f.Level != LevelWarn {
+		t.Errorf("slow ops → %v, want Warn", f.Level)
+	}
+	if f := parseSlowOps("HEALTH_OK"); f.Level != LevelOK {
+		t.Errorf("no slow ops → %v, want OK", f.Level)
+	}
+}
+
+func TestParseCrashLs(t *testing.T) {
+	if f := parseCrashLs(""); f.Level != LevelOK {
+		t.Errorf("no crash → %v, want OK", f.Level)
+	}
+	if f := parseCrashLs("2026-06-17_01:02:03.456_abcd\n2026-06-17_02:03:04.789_efgh\n"); f.Level != LevelWarn {
+		t.Errorf("crashes → %v, want Warn", f.Level)
+	}
+}

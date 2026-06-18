@@ -55,3 +55,29 @@ func TestParseLoad(t *testing.T) {
 		t.Errorf("ratio 0.5 → %v, want OK", ok.Level)
 	}
 }
+
+func TestParseNIC(t *testing.T) {
+	raw := "lo               UNKNOWN ...\neth0             UP ...\neth1             DOWN ...\ncali123          UP ...\n"
+	f := parseNIC(raw)
+	if f.Level != LevelWarn {
+		t.Errorf("eth1 DOWN → %v, want Warn", f.Level)
+	}
+	allup := "eth0  UP\neth1  UP\n"
+	if parseNIC(allup).Level != LevelOK {
+		t.Errorf("all up → want OK")
+	}
+}
+
+func TestParseBond(t *testing.T) {
+	if f := parseBond("(no bonds)"); f.Level != LevelOK {
+		t.Errorf("no bonds → %v, want OK", f.Level)
+	}
+	warn := "/proc/net/bonding/bond0:Link Failure Count: 3\n/proc/net/bonding/bond0:MII Status: up\n"
+	if f := parseBond(warn); f.Level != LevelWarn {
+		t.Errorf("link failure → %v, want Warn", f.Level)
+	}
+	crit := "/proc/net/bonding/bond0:MII Status: down\n"
+	if f := parseBond(crit); f.Level != LevelCritical {
+		t.Errorf("MII down → %v, want Critical", f.Level)
+	}
+}

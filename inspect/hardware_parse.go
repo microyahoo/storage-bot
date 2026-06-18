@@ -129,3 +129,76 @@ func parseLoad(raw string, cores int, warnRatio float64) Finding {
 	}
 	return f
 }
+
+func parseNIC(raw string) Finding {
+	f := Finding{Item: "hw_nic", Detail: raw}
+	skip := func(name string) bool {
+		for _, p := range []string{"lo", "cali", "tun", "ipvs", "veth", "docker", "kube"} {
+			if strings.HasPrefix(name, p) {
+				return true
+			}
+		}
+		return false
+	}
+	var down []string
+	for _, line := range strings.Split(raw, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		name, state := fields[0], fields[1]
+		name = strings.SplitN(name, "@", 2)[0]
+		if skip(name) {
+			continue
+		}
+		if state != "UP" && state != "UNKNOWN" {
+			down = append(down, name+"="+state)
+		}
+	}
+	if len(down) > 0 {
+		f.Level = LevelWarn
+		f.Summary = "网卡未 UP：" + strings.Join(down, ", ")
+	} else {
+		f.Level = LevelOK
+		f.Summary = "物理网卡状态正常"
+	}
+	return f
+}
+
+func parseBond(raw string) Finding {
+	f := Finding{Item: "hw_bond", Detail: raw}
+	if strings.Contains(raw, "(no bonds)") {
+		f.Level, f.Summary = LevelOK, "无 bond 配置"
+		return f
+	}
+	var failTotal int
+	miiDown := false
+	for _, line := range strings.Split(raw, "\n") {
+		_, rest, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		rest = strings.TrimSpace(rest)
+		switch {
+		case strings.HasPrefix(rest, "Link Failure Count"):
+			if _, v, ok2 := strings.Cut(rest, ":"); ok2 {
+				n, _ := strconv.Atoi(strings.TrimSpace(v))
+				failTotal += n
+			}
+		case strings.HasPrefix(rest, "MII Status"):
+			if _, v, ok2 := strings.Cut(rest, ":"); ok2 && strings.TrimSpace(v) != "up" {
+				miiDown = true
+			}
+		}
+	}
+	switch {
+	case miiDown:
+		f.Level, f.Summary = LevelCritical, "存在 MII Status 非 up 的 bond"
+		f.Advice = "检查物理链路与交换机端口"
+	case failTotal > 0:
+		f.Level, f.Summary = LevelWarn, fmt.Sprintf("bond 累计 Link Failure %d 次", failTotal)
+	default:
+		f.Level, f.Summary = LevelOK, "bond 链路正常"
+	}
+	return f
+}
