@@ -20,7 +20,7 @@ type Report struct {
 // Finalize sets Overall from the findings. Call after collecting all findings.
 func (r *Report) Finalize() { r.Overall = MaxLevel(r.Findings) }
 
-func (r *Report) Counts() (ok, warn, crit int) {
+func (r *Report) Counts() (ok, warn, crit, unknown int) {
 	for _, f := range r.Findings {
 		switch f.Level {
 		case LevelOK:
@@ -29,23 +29,28 @@ func (r *Report) Counts() (ok, warn, crit int) {
 			warn++
 		case LevelCritical:
 			crit++
+		case LevelUnknown:
+			unknown++
 		}
 	}
 	return
 }
 
-// Abnormal returns findings at Warn or above, Critical first then Warn.
+// Abnormal returns findings at Warn or above, plus Unknown. Order: Critical → Warn → Unknown.
 func (r *Report) Abnormal() []Finding {
-	var crit, warn []Finding
+	var crit, warn, unknown []Finding
 	for _, f := range r.Findings {
 		switch f.Level {
 		case LevelCritical:
 			crit = append(crit, f)
 		case LevelWarn:
 			warn = append(warn, f)
+		case LevelUnknown:
+			unknown = append(unknown, f)
 		}
 	}
-	return append(crit, warn...)
+	out := append(crit, warn...)
+	return append(out, unknown...)
 }
 
 func itemLabel(f Finding) string {
@@ -57,9 +62,13 @@ func itemLabel(f Finding) string {
 
 func (r *Report) RenderText() string {
 	var b strings.Builder
-	ok, warn, crit := r.Counts()
-	fmt.Fprintf(&b, "**集群巡检 · %s**\n总体：%s · 🔴%d 🟡%d 🟢%d · %s\n\n",
-		r.Cluster, r.Overall.String(), crit, warn, ok, r.StartedAt.Format("2006-01-02 15:04"))
+	ok, warn, crit, unknown := r.Counts()
+	stat := fmt.Sprintf("🔴%d 🟡%d 🟢%d", crit, warn, ok)
+	if unknown > 0 {
+		stat += fmt.Sprintf(" ⚪%d", unknown)
+	}
+	fmt.Fprintf(&b, "**集群巡检 · %s**\n总体：%s · %s · %s\n\n",
+		r.Cluster, r.Overall.String(), stat, r.StartedAt.Format("2006-01-02 15:04"))
 	ab := r.Abnormal()
 	if len(ab) == 0 {
 		b.WriteString("✅ 全部正常\n")
@@ -95,11 +104,15 @@ func themeFor(l Level) card.Theme {
 // markdown table + collapsed-normal line + report link. webBaseURL may be ""
 // to omit the link.
 func (r *Report) RenderCard(webBaseURL string) *card.Card {
-	ok, warn, crit := r.Counts()
+	ok, warn, crit, unknown := r.Counts()
 	c := card.New(r.Overall.Emoji(), "集群巡检报告 · "+r.Cluster, themeFor(r.Overall)).
 		Subtitle(fmt.Sprintf("总体：%s · %s", r.Overall.String(), r.StartedAt.Format("2006-01-02 15:04")))
 
-	c.Body(fmt.Sprintf("🔴 严重 %d · 🟡 警告 %d · 🟢 正常 %d", crit, warn, ok))
+	stat := fmt.Sprintf("🔴 严重 %d · 🟡 警告 %d · 🟢 正常 %d", crit, warn, ok)
+	if unknown > 0 {
+		stat += fmt.Sprintf(" · ⚪ 未知 %d", unknown)
+	}
+	c.Body(stat)
 	c.Divider()
 
 	ab := r.Abnormal()
