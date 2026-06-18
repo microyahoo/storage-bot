@@ -147,7 +147,9 @@ func parseNIC(raw string) Finding {
 			continue
 		}
 		name, state := fields[0], fields[1]
-		name = strings.SplitN(name, "@", 2)[0]
+		if strings.Contains(name, "@") {
+			continue // bond 从属口（如 eth0@bond0），由 hw_bond 单独检查
+		}
 		if skip(name) {
 			continue
 		}

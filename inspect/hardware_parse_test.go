@@ -66,6 +66,11 @@ func TestParseNIC(t *testing.T) {
 	if parseNIC(allup).Level != LevelOK {
 		t.Errorf("all up → want OK")
 	}
+	// bond 从属口 DOWN 属正常，不应误报
+	slave := "bond0      UP\neth0@bond0  DOWN\neth1@bond0  DOWN\n"
+	if parseNIC(slave).Level != LevelOK {
+		t.Errorf("bond slaves DOWN should be ignored → want OK")
+	}
 }
 
 func TestParseBond(t *testing.T) {
