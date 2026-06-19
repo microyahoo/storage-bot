@@ -11,16 +11,18 @@ import (
 )
 
 type Manager struct {
-	mu          sync.RWMutex
-	clusters    map[string]*config.ClusterConfig
-	nodeCache   map[string][]config.SSHNode // cluster name → resolved SSH nodes
-	kubeExecFn  func(cfg *config.ClusterConfig) (*executor.KubeExecutor, error)
+	mu         sync.RWMutex
+	clusters   map[string]*config.ClusterConfig
+	nodeCache  map[string][]config.SSHNode       // cluster name → resolved SSH nodes
+	kubeCache  map[string]*executor.KubeExecutor // cluster name → cached KubeExecutor
+	kubeExecFn func(cfg *config.ClusterConfig) (*executor.KubeExecutor, error)
 }
 
 func NewManager(clusters map[string]*config.ClusterConfig) *Manager {
 	m := &Manager{
 		clusters:  clusters,
 		nodeCache: make(map[string][]config.SSHNode),
+		kubeCache: make(map[string]*executor.KubeExecutor),
 	}
 	m.kubeExecFn = func(cfg *config.ClusterConfig) (*executor.KubeExecutor, error) {
 		return executor.NewKubeExecutor(cfg.Kubeconfig,
@@ -38,6 +40,7 @@ func (m *Manager) Reload(clusters map[string]*config.ClusterConfig) {
 	defer m.mu.Unlock()
 	m.clusters = clusters
 	m.nodeCache = make(map[string][]config.SSHNode)
+	m.kubeCache = make(map[string]*executor.KubeExecutor)
 }
 
 func (m *Manager) Get(name string) (*config.ClusterConfig, error) {
@@ -158,4 +161,29 @@ func (m *Manager) InvalidateNodeCache(clusterName string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.nodeCache, clusterName)
+}
+
+// KubeExecutor returns a cached KubeExecutor for the cluster, creating it on
+// first use. Safe for concurrent callers.
+func (m *Manager) KubeExecutor(name string, cfg *config.ClusterConfig) (*executor.KubeExecutor, error) {
+	m.mu.RLock()
+	if ke, ok := m.kubeCache[name]; ok {
+		m.mu.RUnlock()
+		return ke, nil
+	}
+	m.mu.RUnlock()
+
+	ke, err := m.kubeExecFn(cfg)
+	if err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	m.kubeCache[name] = ke
+	m.mu.Unlock()
+	return ke, nil
+}
+
+// SetKubeExecFnForTest swaps the executor factory (test seam).
+func (m *Manager) SetKubeExecFnForTest(fn func(cfg *config.ClusterConfig) (*executor.KubeExecutor, error)) {
+	m.kubeExecFn = fn
 }
