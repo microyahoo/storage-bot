@@ -50,3 +50,29 @@ func TestRestartMonNotHijackedByMonStatus(t *testing.T) {
 		t.Errorf("重启 mon a should not be mon_status")
 	}
 }
+
+// Regression: "restart mon a cdn" must resolve cluster=cdn, id=a — the daemon
+// id "a" must NOT be picked up as a cluster prefix ("a*").
+func TestRestartMonIDNotMistakenForCluster(t *testing.T) {
+	a := ParseWithAll("restart mon a cdn", []string{"cdn"}, nil, nil)
+	if a.SkillName != "restart_mon" {
+		t.Fatalf("skill = %q, want restart_mon", a.SkillName)
+	}
+	if a.Args["id"] != "a" {
+		t.Errorf("id = %q, want a", a.Args["id"])
+	}
+	if a.ClusterName != "cdn" {
+		t.Errorf("cluster = %q, want cdn (id 'a' leaked into cluster match)", a.ClusterName)
+	}
+}
+
+// Same with multiple cdn-prefixed clusters present: id must still not broadcast.
+func TestRestartMonIDNotBroadcast(t *testing.T) {
+	a := ParseWithAll("restart mon a cdn-01", []string{"cdn-01", "cdn-02"}, nil, nil)
+	if a.ClusterName != "cdn-01" {
+		t.Errorf("cluster = %q, want cdn-01", a.ClusterName)
+	}
+	if a.Args["id"] != "a" {
+		t.Errorf("id = %q, want a", a.Args["id"])
+	}
+}

@@ -144,6 +144,33 @@ func ParseWithAll(message string, knownClusters []string, knownSkills []string, 
 			if lower == entry.skill || strings.Contains(lower, alias) {
 				action.Type = ActionSkill
 				action.SkillName = entry.skill
+
+				// restart_mon/mgr: the daemon id (a/b/c) sits between the daemon
+				// keyword and the cluster name ("restart mon a cdn"). Extract the
+				// id first, then strip "mon <id>" before cluster matching so the
+				// id is not mistaken for a cluster prefix (e.g. "a" → "a*").
+				if entry.skill == "restart_mon" || entry.skill == "restart_mgr" {
+					action.Args = map[string]string{}
+					daemon := strings.TrimPrefix(entry.skill, "restart_") // "mon" / "mgr"
+					id := extractDaemonID(lower, daemon)
+					if id != "" {
+						action.Args["id"] = id
+					}
+					if strings.Contains(lower, "--yes") || strings.Contains(lower, "确认") {
+						action.Args["yes"] = "true"
+					}
+					// Build a cleaned string with "<daemon> <id>", the daemon
+					// keyword, and "--yes" removed, then match the cluster on it.
+					cleaned := lower
+					if id != "" {
+						cleaned = strings.Replace(cleaned, daemon+" "+id, " ", 1)
+					}
+					cleaned = strings.ReplaceAll(cleaned, daemon, " ")
+					cleaned = strings.ReplaceAll(cleaned, "--yes", " ")
+					action.ClusterName = extractClusterName(cleaned, knownClusters)
+					return action
+				}
+
 				action.ClusterName, action.ExcludeClusters = extractClusterTarget(lower, knownClusters)
 				if entry.skill != "list_nodes" {
 					action.NodeName = extractNodeName(lower, knownClusters)
@@ -158,16 +185,6 @@ func ParseWithAll(message string, knownClusters []string, knownSkills []string, 
 							action.Args = map[string]string{}
 						}
 						action.Args["keyword"] = kw
-					}
-				}
-				if entry.skill == "restart_mon" || entry.skill == "restart_mgr" {
-					action.Args = map[string]string{}
-					daemon := strings.TrimPrefix(entry.skill, "restart_") // "mon" / "mgr"
-					if id := extractDaemonID(lower, daemon); id != "" {
-						action.Args["id"] = id
-					}
-					if strings.Contains(lower, "--yes") || strings.Contains(lower, "确认") {
-						action.Args["yes"] = "true"
 					}
 				}
 				return action
