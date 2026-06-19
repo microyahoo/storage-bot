@@ -353,6 +353,10 @@ func (h *Handler) helpMessage() string {
 		"- 健康检查：`check cluster-01` / `看看01集群怎么了`\n" +
 		"- 日志分析：`analyze logs cluster-01`\n" +
 		"- 节点诊断：`check node-1 cluster-01`\n\n" +
+		"**🔍 集群巡检**（Ceph 状态 + 节点硬件，结构化报告）\n" +
+		"- 单集群：`巡检 cluster-01` / `inspect cluster-01` / `体检 cluster-01`\n" +
+		"- 全部集群：`巡检所有集群` / `inspect all clusters`\n" +
+		"- 查群 chat_id（配置定时推送用）：`chatid` / `群id`\n\n" +
 		"**⚙️ Skill 执行**\n" +
 		"- 单集群：`osd cluster-01` / `cluster-02 容量`\n" +
 		"- 批量（仅 set/unset nobackfill/noout）：\n" +
@@ -389,6 +393,7 @@ func (h *Handler) helpMessage() string {
 		"**💡 示例**\n" +
 		"```\n" +
 		"@bot 帮我看看cluster-01的状态\n" +
+		"@bot 巡检 cluster-01\n" +
 		"@bot 分析一下cluster-02的日志\n" +
 		"@bot iostat cdn bd-cdn-node02\n" +
 		"@bot kernel cdn bd-cdn-node02 keyword=link\n" +

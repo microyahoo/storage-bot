@@ -4,7 +4,7 @@ import "testing"
 
 func TestParseInspectIntent(t *testing.T) {
 	clusters := []string{"prod-ceph-01"}
-	for _, msg := range []string{"巡检 prod-ceph-01", "检查一下 prod-ceph-01 集群", "体检 prod-ceph-01"} {
+	for _, msg := range []string{"巡检 prod-ceph-01", "体检 prod-ceph-01"} {
 		a := ParseWithAll(msg, clusters, nil, nil)
 		if a.Type != ActionInspect {
 			t.Errorf("%q → %v, want ActionInspect", msg, a.Type)
@@ -22,5 +22,31 @@ func TestParseInspectAll(t *testing.T) {
 	}
 	if a.ClusterName != "" {
 		t.Errorf("巡检所有集群 should leave ClusterName empty (means all), got %q", a.ClusterName)
+	}
+}
+
+func TestParseInspectEnglish(t *testing.T) {
+	clusters := []string{"prod-ceph-01"}
+	for _, msg := range []string{
+		"inspect prod-ceph-01",
+		"inspection prod-ceph-01",
+	} {
+		a := ParseWithAll(msg, clusters, nil, nil)
+		if a.Type != ActionInspect {
+			t.Errorf("%q → %v, want ActionInspect", msg, a.Type)
+		}
+		if a.ClusterName != "prod-ceph-01" {
+			t.Errorf("%q → cluster %q, want prod-ceph-01", msg, a.ClusterName)
+		}
+	}
+}
+
+func TestParseInspectAllEnglish(t *testing.T) {
+	a := ParseWithAll("inspect all clusters", []string{"a", "b"}, nil, nil)
+	if a.Type != ActionInspect {
+		t.Fatalf("want ActionInspect, got %v", a.Type)
+	}
+	if a.ClusterName != "" {
+		t.Errorf("inspect all clusters should leave ClusterName empty, got %q", a.ClusterName)
 	}
 }

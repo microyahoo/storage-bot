@@ -93,10 +93,11 @@ func ParseWithAll(message string, knownClusters []string, knownSkills []string, 
 	// Inspection — checked before skill aliases so trigger words 巡检/体检/检查
 	// are not swallowed by coarser skill matches (e.g. "检查容量" must run a full
 	// inspection, not the capacity skill). Empty ClusterName means "all clusters".
+	// "inspect" matches "inspection" too (substring).
 	if strings.Contains(lower, "巡检") || strings.Contains(lower, "体检") ||
-		(strings.Contains(lower, "检查") && strings.Contains(lower, "集群")) {
+		strings.Contains(lower, "inspect") {
 		action.Type = ActionInspect
-		if !strings.Contains(lower, "所有") && !strings.Contains(lower, "全部") {
+		if !strings.Contains(lower, "所有") && !strings.Contains(lower, "全部") && !strings.Contains(lower, "all") {
 			action.ClusterName = extractClusterName(lower, knownClusters)
 		}
 		return action
