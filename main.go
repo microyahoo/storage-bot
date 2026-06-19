@@ -81,13 +81,16 @@ func main() {
 			cfg.Inspect.Thresholds, cfg.Inspect.LLMSummary, inspectStore)
 	}
 
+	// webBase for report links is left empty: cfg.Web.Listen is a bind address
+	// (e.g. ":8080"), not an externally reachable URL, so it would produce a
+	// broken link. Cards omit the report link when webBase is empty.
 	handler := bot.NewHandler(feishuClient, clusterMgr, sshExec,
 		bot.WithAnalyzer(az),
 		bot.WithLLM(llmProvider),
 		bot.WithSkills(skills),
 		bot.WithAudit(audit),
 		bot.WithDev(cfg.Dev),
-		bot.WithInspectRunner(inspectRunner, cfg.Web.Listen),
+		bot.WithInspectRunner(inspectRunner, ""),
 	)
 
 	// Register REST storage backends (Yanrong only).
@@ -97,7 +100,7 @@ func main() {
 	// scheduler can push report cards to the configured chat.
 	var inspectScheduler *inspect.Scheduler
 	if cfg.Inspect.Enabled {
-		inspectScheduler = inspect.NewScheduler(inspectRunner, cfg.Inspect, clusterMgr, handler, cfg.Web.Listen)
+		inspectScheduler = inspect.NewScheduler(inspectRunner, cfg.Inspect, clusterMgr, handler, "")
 	}
 
 	// Config hot-reload: watch file changes + SIGHUP
