@@ -24,6 +24,7 @@ const (
 	ActionListSkills
 	ActionRESTStorage // query a non-Ceph REST storage system
 	ActionToggleLLM   // enable/disable LLM at runtime
+	ActionInspect     // run cluster inspection
 )
 
 func (t ActionType) String() string {
@@ -46,6 +47,8 @@ func (t ActionType) String() string {
 		return "rest storage"
 	case ActionToggleLLM:
 		return "toggle llm"
+	case ActionInspect:
+		return "inspect"
 	default:
 		return "unknown"
 	}
@@ -84,6 +87,18 @@ func ParseWithAll(message string, knownClusters []string, knownSkills []string, 
 		action.ToggleLLMEnable = strings.Contains(lower, "enable") ||
 			strings.Contains(lower, "开启") || strings.Contains(lower, "打开") ||
 			strings.Contains(lower, "启用") || strings.Contains(lower, "on")
+		return action
+	}
+
+	// Inspection — checked before skill aliases so trigger words 巡检/体检/检查
+	// are not swallowed by coarser skill matches (e.g. "检查容量" must run a full
+	// inspection, not the capacity skill). Empty ClusterName means "all clusters".
+	if strings.Contains(lower, "巡检") || strings.Contains(lower, "体检") ||
+		(strings.Contains(lower, "检查") && strings.Contains(lower, "集群")) {
+		action.Type = ActionInspect
+		if !strings.Contains(lower, "所有") && !strings.Contains(lower, "全部") {
+			action.ClusterName = extractClusterName(lower, knownClusters)
+		}
 		return action
 	}
 
