@@ -3,3 +3,5 @@ storage-bot
 kubecongfigs/*
 config.bak.yaml
 bin/
+inspect-reports/
+.superpowers/
