@@ -66,6 +66,8 @@ func NewRegistry() *Registry {
 	r.Register(&SetNoout{})
 	r.Register(&UnsetNoout{})
 	r.Register(&OptimizeRGWBucketsPG{})
+	r.Register(&RestartMon{})
+	r.Register(&RestartMgr{})
 	return r
 }
 

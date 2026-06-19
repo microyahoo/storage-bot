@@ -113,6 +113,9 @@ func ParseWithAll(message string, knownClusters []string, knownSkills []string, 
 		aliases []string
 	}
 	skillAliasTable := []aliasEntry{
+		// restart_* first: "重启 mon a" must not be hijacked by mon_status (alias "mon").
+		{"restart_mon", []string{"重启mon", "重启 mon", "restart mon", "restart_mon", "重启监视器"}},
+		{"restart_mgr", []string{"重启mgr", "重启 mgr", "restart mgr", "restart_mgr"}},
 		// unset before set (avoids "unset nobackfill" matching "set nobackfill")
 		{"unset_no_backfill", []string{"unset nobackfill", "unset no_backfill", "unset_no_backfill", "取消nobackfill", "恢复迁移", "恢复backfill"}},
 		{"unset_noout", []string{"unset noout", "unset_noout", "取消noout"}},
@@ -155,6 +158,16 @@ func ParseWithAll(message string, knownClusters []string, knownSkills []string, 
 							action.Args = map[string]string{}
 						}
 						action.Args["keyword"] = kw
+					}
+				}
+				if entry.skill == "restart_mon" || entry.skill == "restart_mgr" {
+					action.Args = map[string]string{}
+					daemon := strings.TrimPrefix(entry.skill, "restart_") // "mon" / "mgr"
+					if id := extractDaemonID(lower, daemon); id != "" {
+						action.Args["id"] = id
+					}
+					if strings.Contains(lower, "--yes") || strings.Contains(lower, "确认") {
+						action.Args["yes"] = "true"
 					}
 				}
 				return action
@@ -463,8 +476,23 @@ func extractSkillArgs(lower string, params []string) map[string]string {
 	return args
 }
 
-// extractKeyword pulls a free-text keyword out of the message for the
-// kernel_logs skill. Supports `keyword=X`, `keyword X`, `关键字 X`, `关键字=X`.
+// extractDaemonID pulls the mon/mgr id (e.g. "a") that follows the daemon
+// keyword: "重启 mon a", "restart mgr b". The id is a short alphanumeric token
+// (rook uses a/b/c, sometimes multi-char). Returns "" if not found.
+func extractDaemonID(lower, daemon string) string {
+	re := regexp.MustCompile(`(?i)\b` + daemon + `\s+([a-z0-9]{1,3})\b`)
+	if m := re.FindStringSubmatch(lower); len(m) > 1 {
+		id := m[1]
+		// Guard against capturing words like "mon status"; reject known keywords.
+		switch id {
+		case "ip", "ips", "id":
+			return ""
+		}
+		return id
+	}
+	return ""
+}
+
 // The captured token is alphanumeric (plus `_`/`-`/`.`/`:`) so it is safe to
 // inline into the remote shell pipeline.
 func extractKeyword(lower string) string {

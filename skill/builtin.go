@@ -617,3 +617,80 @@ func resolveNodes(nodes []SSHTarget, nodeName string) ([]SSHTarget, error) {
 	}
 	return nil, fmt.Errorf("集群中未找到节点 %q，可用节点: %s", nodeName, strings.Join(names, ", "))
 }
+
+// RestartMon restarts a specific mon by deleting its pod (rook recreates it).
+type RestartMon struct{}
+
+func (s *RestartMon) Name() string { return "restart_mon" }
+func (s *RestartMon) Description() string {
+	return "重启指定 mon（删除其 pod，rook 自动重建）"
+}
+func (s *RestartMon) Execute(sc *Context) (string, error) {
+	return restartCephDaemon(sc, "mon")
+}
+
+// RestartMgr restarts a specific mgr by deleting its pod (rook recreates it).
+type RestartMgr struct{}
+
+func (s *RestartMgr) Name() string { return "restart_mgr" }
+func (s *RestartMgr) Description() string {
+	return "重启指定 mgr（删除其 pod，rook 自动重建）"
+}
+func (s *RestartMgr) Execute(sc *Context) (string, error) {
+	return restartCephDaemon(sc, "mgr")
+}
+
+// restartCephDaemon implements the shared restart-by-pod-delete flow for mon/mgr.
+//
+//	Args["id"]  — daemon id (a/b/c). Required to act; if empty, list candidates.
+//	Args["yes"] — "true" to actually delete; otherwise preview only (safety gate).
+func restartCephDaemon(sc *Context, daemon string) (string, error) {
+	if sc.KubeExec == nil {
+		return "", fmt.Errorf("no kubernetes connection available")
+	}
+	pods, err := sc.KubeExec.ListCephPods(sc.Ctx, daemon)
+	if err != nil {
+		return "", err
+	}
+	if len(pods) == 0 {
+		return fmt.Sprintf("未找到任何 %s pod", daemon), nil
+	}
+
+	id := strings.TrimSpace(sc.Args["id"])
+	if id == "" {
+		// No id: list candidates so the operator can pick one.
+		var b strings.Builder
+		fmt.Fprintf(&b, "请指定要重启的 %s id（例如 `重启 %s a %s`）。当前 %s 列表：\n", daemon, daemon, sc.ClusterName, daemon)
+		for _, p := range pods {
+			fmt.Fprintf(&b, "- `%s`（id=%s, node=%s, %s）\n", p.Name, p.DaemonID, p.Node, p.Status)
+		}
+		return b.String(), nil
+	}
+
+	// Find the pod matching the requested id (index into the slice; avoids
+	// importing executor just for the element type).
+	idx := -1
+	var availIDs []string
+	for i, p := range pods {
+		availIDs = append(availIDs, p.DaemonID)
+		if p.DaemonID == id {
+			idx = i
+		}
+	}
+	if idx < 0 {
+		return fmt.Sprintf("未找到 %s.%s。可用 id：%s", daemon, id, strings.Join(availIDs, ", ")), nil
+	}
+	target := pods[idx]
+
+	if sc.Args["yes"] != "true" {
+		return fmt.Sprintf("⚠️ 将重启 **%s.%s**（删除 pod `%s` @ %s，rook 会自动重建）。\n"+
+			"这是写操作，确认请重发并加 `--yes`：`重启 %s %s %s --yes`",
+			daemon, id, target.Name, target.Node, daemon, id, sc.ClusterName), nil
+	}
+
+	if err := sc.KubeExec.DeletePod(sc.Ctx, target.Name); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("✅ 已删除 pod `%s`（%s.%s @ %s），rook 正在重建中。\n用 `mon status` / `ceph -s` 确认恢复。",
+		target.Name, daemon, id, target.Node), nil
+}

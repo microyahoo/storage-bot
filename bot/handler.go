@@ -375,6 +375,10 @@ func (h *Handler) helpMessage() string {
 		"**📈 RGW PG 优化**\n" +
 		"- `optimize rgw cluster-01`（默认 max=100）\n" +
 		"- `optimize rgw cluster-01 max=50`\n\n" +
+		"**♻️ 重启 mon / mgr**（删除 pod，rook 自动重建；写操作需 `--yes`）\n" +
+		"- 列出候选：`重启 mon cluster-01` / `restart mgr cluster-01`\n" +
+		"- 预览：`重启 mon a cluster-01`（显示将删的 pod，不执行）\n" +
+		"- 执行：`重启 mon a cluster-01 --yes` / `restart mgr b cluster-01 --yes`\n\n" +
 		"**🤖 LLM 开关**\n" +
 		"- `enable llm` / `开启llm`\n" +
 		"- `disable llm` / `关闭llm`\n\n" +
@@ -641,6 +645,8 @@ var noAnalysisSkills = map[string]bool{
 	"kernel_logs":       true,
 	"nic_info":          true,
 	"bond_status":       true,
+	"restart_mon":       true,
+	"restart_mgr":       true,
 }
 
 func needsAnalysis(skillName string) bool {
