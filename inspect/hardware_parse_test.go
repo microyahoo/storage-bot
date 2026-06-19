@@ -1,6 +1,9 @@
 package inspect
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseMemory(t *testing.T) {
 	raw := "              total        used        free      shared  buff/cache   available\nMem:    100         95          1           0           4           2\n"
@@ -57,19 +60,31 @@ func TestParseLoad(t *testing.T) {
 }
 
 func TestParseNIC(t *testing.T) {
-	raw := "lo               UNKNOWN ...\neth0             UP ...\neth1             DOWN ...\ncali123          UP ...\n"
-	f := parseNIC(raw)
+	// hw_nic checks only bond member ports via the bonding file's per-slave
+	// "MII Status". A slave with non-up MII → Warn; no bonds → OK.
+	noBonds := "(no bonds)"
+	if parseNIC(noBonds).Level != LevelOK {
+		t.Errorf("no bonds → %v, want OK", parseNIC(noBonds).Level)
+	}
+
+	allUp := "/proc/net/bonding/bond0:Slave Interface: eth0\n" +
+		"/proc/net/bonding/bond0:MII Status: up\n" +
+		"/proc/net/bonding/bond0:Slave Interface: eth1\n" +
+		"/proc/net/bonding/bond0:MII Status: up\n"
+	if f := parseNIC(allUp); f.Level != LevelOK {
+		t.Errorf("all slaves up → %v, want OK", f.Level)
+	}
+
+	oneDown := "/proc/net/bonding/bond0:Slave Interface: eth0\n" +
+		"/proc/net/bonding/bond0:MII Status: up\n" +
+		"/proc/net/bonding/bond0:Slave Interface: eth1\n" +
+		"/proc/net/bonding/bond0:MII Status: down\n"
+	f := parseNIC(oneDown)
 	if f.Level != LevelWarn {
-		t.Errorf("eth1 DOWN → %v, want Warn", f.Level)
+		t.Errorf("one slave down → %v, want Warn", f.Level)
 	}
-	allup := "eth0  UP\neth1  UP\n"
-	if parseNIC(allup).Level != LevelOK {
-		t.Errorf("all up → want OK")
-	}
-	// bond 从属口 DOWN 属正常，不应误报
-	slave := "bond0      UP\neth0@bond0  DOWN\neth1@bond0  DOWN\n"
-	if parseNIC(slave).Level != LevelOK {
-		t.Errorf("bond slaves DOWN should be ignored → want OK")
+	if !strings.Contains(f.Summary, "eth1") {
+		t.Errorf("summary should name the down slave eth1, got %q", f.Summary)
 	}
 }
 

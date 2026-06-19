@@ -130,39 +130,46 @@ func parseLoad(raw string, cores int, warnRatio float64) Finding {
 	return f
 }
 
+// parseNIC checks bond member ports only. Input is the bonding files' grepped
+// lines (Slave Interface + MII Status). A member whose own MII Status is not
+// "up" → Warn, naming the port. Independent/idle physical ports are
+// intentionally ignored; overall bond health is covered by parseBond. No
+// bonds → OK.
 func parseNIC(raw string) Finding {
 	f := Finding{Item: "hw_nic", Detail: raw}
-	skip := func(name string) bool {
-		for _, p := range []string{"lo", "cali", "tun", "ipvs", "veth", "docker", "kube"} {
-			if strings.HasPrefix(name, p) {
-				return true
-			}
-		}
-		return false
+	if strings.Contains(raw, "(no bonds)") {
+		f.Level, f.Summary = LevelOK, "无 bond 成员口"
+		return f
 	}
 	var down []string
+	curSlave := ""
 	for _, line := range strings.Split(raw, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
+		_, rest, ok := strings.Cut(line, ":")
+		if !ok {
 			continue
 		}
-		name, state := fields[0], fields[1]
-		if strings.Contains(name, "@") {
-			continue // bond 从属口（如 eth0@bond0），由 hw_bond 单独检查
-		}
-		if skip(name) {
-			continue
-		}
-		if state != "UP" && state != "UNKNOWN" {
-			down = append(down, name+"="+state)
+		rest = strings.TrimSpace(rest)
+		switch {
+		case strings.HasPrefix(rest, "Slave Interface"):
+			if _, v, ok2 := strings.Cut(rest, ":"); ok2 {
+				curSlave = strings.TrimSpace(v)
+			}
+		case strings.HasPrefix(rest, "MII Status"):
+			// Only the MII line that follows a Slave Interface line describes a
+			// member port; the bond's own global MII line has curSlave == "".
+			if _, v, ok2 := strings.Cut(rest, ":"); ok2 && curSlave != "" && strings.TrimSpace(v) != "up" {
+				down = append(down, curSlave)
+			}
+			curSlave = "" // consume; next MII must be preceded by a new slave line
 		}
 	}
 	if len(down) > 0 {
 		f.Level = LevelWarn
-		f.Summary = "网卡未 UP：" + strings.Join(down, ", ")
+		f.Summary = "bond 成员口未 up：" + strings.Join(down, ", ")
+		f.Advice = "检查对应物理网口连线与交换机端口"
 	} else {
 		f.Level = LevelOK
-		f.Summary = "物理网卡状态正常"
+		f.Summary = "bond 成员口状态正常"
 	}
 	return f
 }

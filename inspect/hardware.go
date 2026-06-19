@@ -26,15 +26,18 @@ func (hwCPU) Name() string        { return "hw_cpu" }
 func (hwCPU) Description() string { return "CPU load" }
 func (hwCPU) Scope() Scope        { return NodeScope }
 func (hwCPU) Inspect(ic *InspectContext) ([]Finding, error) {
-	raw, err := ic.RunOnNode("nproc; uptime")
+	// Two single commands instead of "nproc; uptime": the SSH validator rejects
+	// shell metacharacters (the ";") unless the leading token is allow-listed.
+	coresOut, err := ic.RunOnNode("nproc")
 	if err != nil {
 		return []Finding{{Item: "hw_cpu", Node: ic.Node.Name, Level: LevelUnknown, Summary: "采集失败", Detail: err.Error()}}, nil
 	}
-	cores := 0
-	if parts := strings.SplitN(strings.TrimSpace(raw), "\n", 2); len(parts) > 0 {
-		cores, _ = strconv.Atoi(strings.TrimSpace(parts[0]))
+	loadOut, err := ic.RunOnNode("uptime")
+	if err != nil {
+		return []Finding{{Item: "hw_cpu", Node: ic.Node.Name, Level: LevelUnknown, Summary: "采集失败", Detail: err.Error()}}, nil
 	}
-	f := parseLoad(raw, cores, ic.Thresholds.LoadWarnRatio)
+	cores, _ := strconv.Atoi(strings.TrimSpace(coresOut))
+	f := parseLoad(loadOut, cores, ic.Thresholds.LoadWarnRatio)
 	f.Node = ic.Node.Name
 	return []Finding{f}, nil
 }
@@ -92,10 +95,13 @@ func (hwDiskSmart) Inspect(ic *InspectContext) ([]Finding, error) {
 type hwNIC struct{}
 
 func (hwNIC) Name() string        { return "hw_nic" }
-func (hwNIC) Description() string { return "物理网卡 UP 状态" }
+func (hwNIC) Description() string { return "bond 成员口 UP 状态" }
 func (hwNIC) Scope() Scope        { return NodeScope }
 func (hwNIC) Inspect(ic *InspectContext) ([]Finding, error) {
-	raw, err := ic.RunOnNode("ip -br link show")
+	// Only bond member ports matter; read the bonding files' Slave Interface +
+	// per-slave MII Status. Idle standalone NICs are intentionally not checked.
+	cmd := "grep -H -E '^(Slave Interface|MII Status)' /proc/net/bonding/bond* 2>/dev/null || echo '(no bonds)'"
+	raw, err := ic.RunOnNode(cmd)
 	if err != nil {
 		return []Finding{{Item: "hw_nic", Node: ic.Node.Name, Level: LevelUnknown, Summary: "采集失败", Detail: err.Error()}}, nil
 	}
