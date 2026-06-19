@@ -1,0 +1,32 @@
+{{define "inspect-content"}}
+<h1 class="text-xl font-semibold text-slate-50 mb-4">集群巡检</h1>
+
+{{if not .Enabled}}
+<div class="bg-ink-800 border border-line rounded-lg px-5 py-4 text-mute">
+  巡检功能未启用。请在 config 中设置 <code>inspect.enabled: true</code> 后重启。
+</div>
+{{else if eq .Cluster ""}}
+<div class="bg-ink-800 border border-line rounded-lg px-5 py-4 text-mute">
+  在 URL 指定集群，例如 <code>/inspect/prod-ceph-01</code>，即可触发巡检并查看历史报告。
+</div>
+{{else}}
+<div class="bg-ink-800 border border-line rounded-lg px-5 py-4 mb-6">
+  <div class="text-mute text-[11px] uppercase tracking-wider mb-2">立即巡检</div>
+  <form method="post" action="/api/inspect/{{.Cluster}}">
+    <button type="submit" class="px-4 py-2 rounded-md bg-ink-700 text-slate-100 hover:bg-ink-600 text-[13px]">
+      巡检 {{.Cluster}}
+    </button>
+  </form>
+  <div class="text-mute text-[11px] mt-2">巡检结果以 JSON 返回（也可在飞书查看卡片）。</div>
+</div>
+
+<div class="bg-ink-800 border border-line rounded-lg px-5 py-4">
+  <div class="text-mute text-[11px] uppercase tracking-wider mb-2">历史报告（{{.Cluster}}）</div>
+  <ul class="text-[13px] text-slate-200 space-y-1">
+    {{range .History}}<li><code>{{.}}</code></li>{{else}}<li class="text-mute">暂无历史报告</li>{{end}}
+  </ul>
+</div>
+{{end}}
+{{end}}
+
+{{define "content"}}{{template "inspect-content" .}}{{end}}
