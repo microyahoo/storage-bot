@@ -103,7 +103,7 @@ func (s *Scheduler) tick(ctx context.Context) {
 		}
 		if s.notifier != nil && s.cfg.NotifyChat != "" && shouldNotify(rep.Overall, s.cfg.NotifyMinLevel) {
 			if err := s.notifier.NotifyReport(ctx, s.cfg.NotifyChat, rep); err != nil {
-				slog.Error("inspect notify failed", "cluster", name, "error", err)
+				slog.Error("inspect notify failed", "cluster", name, "chat_id", s.cfg.NotifyChat, "error", err)
 			}
 		}
 	}

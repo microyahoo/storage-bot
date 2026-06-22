@@ -165,13 +165,17 @@ func ParseWithAll(message string, knownClusters []string, knownSkills []string, 
 					// Strip daemon keyword, cluster name, --yes, the verb and
 					// punctuation; whatever short alnum token remains is the id.
 					cleaned := lower
+					// fmt.Println(cleaned) // eg: restart mon b cdn --yes
 					cleaned = strings.ReplaceAll(cleaned, "--yes", " ")
+					// fmt.Println(cleaned) // eg: restart mon b cdn
 					if cluster != "" {
 						cleaned = strings.ReplaceAll(cleaned, strings.ToLower(cluster), " ")
 					}
+					// fmt.Println(cleaned) // eg: restart mon b
 					for _, w := range []string{"restart", "重启", "确认", daemon} {
 						cleaned = strings.ReplaceAll(cleaned, w, " ")
 					}
+					// fmt.Println(cleaned) // eg: b
 					for _, tok := range strings.Fields(cleaned) {
 						if len(tok) > 3 || !isAlnum(tok) {
 							continue
@@ -179,7 +183,7 @@ func ParseWithAll(message string, knownClusters []string, knownSkills []string, 
 						// A token that is a substring of some known cluster name is
 						// a cluster shorthand (e.g. "cdn" for "cdn-01"), not a daemon
 						// id — don't mistake it for the id.
-						if isClusterFragment(tok, knownClusters) {
+						if action.ClusterName == "" && isClusterFragment(tok, knownClusters) {
 							continue
 						}
 						action.Args["id"] = tok

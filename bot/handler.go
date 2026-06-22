@@ -173,6 +173,7 @@ func (h *Handler) HandleMessage(ctx context.Context, event *larkim.P2MessageRece
 		"cluster", action.ClusterName,
 		"node", action.NodeName,
 		"storage", action.StorageName,
+		"args", action.Args,
 	)
 
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
