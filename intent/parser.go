@@ -145,29 +145,46 @@ func ParseWithAll(message string, knownClusters []string, knownSkills []string, 
 				action.Type = ActionSkill
 				action.SkillName = entry.skill
 
-				// restart_mon/mgr: the daemon id (a/b/c) sits between the daemon
-				// keyword and the cluster name ("restart mon a cdn"). Extract the
-				// id first, then strip "mon <id>" before cluster matching so the
-				// id is not mistaken for a cluster prefix (e.g. "a" → "a*").
+				// restart_mon/mgr: a message looks like "restart mon a cdn" (with
+				// id) or "restart mon cdn" (no id → list candidates). Both the id
+				// (a/b/c) and the cluster (cdn) are short tokens, so resolve the
+				// CLUSTER first (it's a known set, a reliable anchor), then treat
+				// any leftover token between the daemon keyword and the cluster as
+				// the id.
 				if entry.skill == "restart_mon" || entry.skill == "restart_mgr" {
 					action.Args = map[string]string{}
 					daemon := strings.TrimPrefix(entry.skill, "restart_") // "mon" / "mgr"
-					id := extractDaemonID(lower, daemon)
-					if id != "" {
-						action.Args["id"] = id
-					}
+
+					cluster := extractClusterName(lower, knownClusters)
+					action.ClusterName = cluster
+
 					if strings.Contains(lower, "--yes") || strings.Contains(lower, "确认") {
 						action.Args["yes"] = "true"
 					}
-					// Build a cleaned string with "<daemon> <id>", the daemon
-					// keyword, and "--yes" removed, then match the cluster on it.
+
+					// Strip daemon keyword, cluster name, --yes, the verb and
+					// punctuation; whatever short alnum token remains is the id.
 					cleaned := lower
-					if id != "" {
-						cleaned = strings.Replace(cleaned, daemon+" "+id, " ", 1)
-					}
-					cleaned = strings.ReplaceAll(cleaned, daemon, " ")
 					cleaned = strings.ReplaceAll(cleaned, "--yes", " ")
-					action.ClusterName = extractClusterName(cleaned, knownClusters)
+					if cluster != "" {
+						cleaned = strings.ReplaceAll(cleaned, strings.ToLower(cluster), " ")
+					}
+					for _, w := range []string{"restart", "重启", "确认", daemon} {
+						cleaned = strings.ReplaceAll(cleaned, w, " ")
+					}
+					for _, tok := range strings.Fields(cleaned) {
+						if len(tok) > 3 || !isAlnum(tok) {
+							continue
+						}
+						// A token that is a substring of some known cluster name is
+						// a cluster shorthand (e.g. "cdn" for "cdn-01"), not a daemon
+						// id — don't mistake it for the id.
+						if isClusterFragment(tok, knownClusters) {
+							continue
+						}
+						action.Args["id"] = tok
+						break
+					}
 					return action
 				}
 
@@ -471,6 +488,31 @@ func isNumeric(s string) bool {
 	return true
 }
 
+// isAlnum reports whether s is non-empty and all ASCII letters/digits.
+func isAlnum(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if !(r >= 'a' && r <= 'z') && !(r >= 'A' && r <= 'Z') && !(r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return true
+}
+
+// isClusterFragment reports whether tok appears as a substring of any known
+// cluster name. Used to avoid mistaking a cluster shorthand (e.g. "cdn" for
+// "cdn-01") for a daemon id when parsing restart_mon/mgr.
+func isClusterFragment(tok string, knownClusters []string) bool {
+	for _, name := range knownClusters {
+		if strings.Contains(strings.ToLower(name), tok) {
+			return true
+		}
+	}
+	return false
+}
+
 // extractSkillArgs parses named numeric parameters from the message.
 // Supports "param=N" and "param N" patterns for the given param names.
 func extractSkillArgs(lower string, params []string) map[string]string {
@@ -493,23 +535,8 @@ func extractSkillArgs(lower string, params []string) map[string]string {
 	return args
 }
 
-// extractDaemonID pulls the mon/mgr id (e.g. "a") that follows the daemon
-// keyword: "重启 mon a", "restart mgr b". The id is a short alphanumeric token
-// (rook uses a/b/c, sometimes multi-char). Returns "" if not found.
-func extractDaemonID(lower, daemon string) string {
-	re := regexp.MustCompile(`(?i)\b` + daemon + `\s+([a-z0-9]{1,3})\b`)
-	if m := re.FindStringSubmatch(lower); len(m) > 1 {
-		id := m[1]
-		// Guard against capturing words like "mon status"; reject known keywords.
-		switch id {
-		case "ip", "ips", "id":
-			return ""
-		}
-		return id
-	}
-	return ""
-}
-
+// extractKeyword pulls a free-text keyword out of the message for the
+// kernel_logs skill. Supports `keyword=X`, `keyword X`, `关键字 X`, `关键字=X`.
 // The captured token is alphanumeric (plus `_`/`-`/`.`/`:`) so it is safe to
 // inline into the remote shell pipeline.
 func extractKeyword(lower string) string {

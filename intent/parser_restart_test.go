@@ -43,6 +43,26 @@ func TestParseRestartMonNoID(t *testing.T) {
 	}
 }
 
+// Regression: "restart mon cdn" (no id) must not consume the cluster token
+// "cdn" as the daemon id. id stays empty (→ skill lists candidates). When the
+// cluster name is exactly "cdn" it also resolves as the cluster.
+func TestRestartMonNoIDKeepsCluster(t *testing.T) {
+	// Exact name "cdn": both cluster resolved and id empty.
+	a := ParseWithAll("restart mon cdn", []string{"cdn"}, nil, nil)
+	if a.SkillName != "restart_mon" || a.ClusterName != "cdn" || a.Args["id"] != "" {
+		t.Errorf("restart mon cdn [cdn] → skill=%q cluster=%q id=%q, want restart_mon/cdn/empty",
+			a.SkillName, a.ClusterName, a.Args["id"])
+	}
+	// Shorthand "cdn" for "cdn-01": cluster may not resolve (whole-word limit),
+	// but "cdn" must NOT be taken as the daemon id.
+	for _, clusters := range [][]string{{"cdn-01"}, {"cdn", "cdn-01"}} {
+		a := ParseWithAll("restart mon cdn", clusters, nil, nil)
+		if a.Args["id"] != "" {
+			t.Errorf("clusters=%v: id=%q, want empty (cdn is a cluster fragment, not an id)", clusters, a.Args["id"])
+		}
+	}
+}
+
 func TestRestartMonNotHijackedByMonStatus(t *testing.T) {
 	// Ensure restart_* is matched before mon_status (alias "mon").
 	a := ParseWithAll("重启 mon a cluster-01", []string{"cluster-01"}, nil, nil)
