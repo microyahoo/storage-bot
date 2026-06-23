@@ -69,6 +69,11 @@ func parseDiskUsage(raw string, warnPct, critPct int) []Finding {
 
 var smartPctRe = regexp.MustCompile(`Percentage Used:\s*(\d+)%`)
 
+// SCSI/SAS 盘及 RAID 卡后面的虚拟盘（如系统盘 RAID1）走 SCSI 输出格式，
+// 没有 ATA 的 "self-assessment test result" 行，也读不到 Percentage Used
+// 寿命，健康状态体现在 "SMART Health Status:" 这一行。
+var smartHealthRe = regexp.MustCompile(`SMART Health Status:\s*(\S+)`)
+
 func parseSmart(dev, raw string, warnPct, critPct int) Finding {
 	f := Finding{Item: "hw_disk_smart", Detail: raw, Metrics: map[string]string{"device": dev}}
 	if strings.Contains(raw, "command not found") || strings.Contains(raw, "not installed") {
@@ -100,6 +105,20 @@ func parseSmart(dev, raw string, warnPct, critPct int) Finding {
 	if strings.Contains(raw, "self-assessment test result: PASSED") {
 		f.Level = LevelOK
 		f.Summary = dev + "：SMART PASSED"
+		return f
+	}
+	// SCSI/SAS/RAID 盘的健康行；HDD 与 RAID1 系统盘多走这里，没有寿命百分比。
+	if m := smartHealthRe.FindStringSubmatch(raw); m != nil {
+		status := m[1]
+		f.Metrics["health_status"] = status
+		if status == "OK" {
+			f.Level = LevelOK
+			f.Summary = dev + "：SMART OK"
+		} else {
+			f.Level = LevelCritical
+			f.Summary = dev + "：SMART Health Status " + status
+			f.Advice = "磁盘健康状态异常，尽快排查更换"
+		}
 		return f
 	}
 	f.Level, f.Summary = LevelUnknown, dev+"：无法解析 smartctl 输出"

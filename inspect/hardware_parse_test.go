@@ -47,6 +47,21 @@ func TestParseSmartMissing(t *testing.T) {
 	}
 }
 
+func TestParseSmartHealthStatus(t *testing.T) {
+	// SCSI/RAID 盘（如系统盘 RAID1、SAS HDD）无寿命百分比，健康体现在
+	// "SMART Health Status:" 行——曾被误判为"无法解析"。
+	raw := "=== START OF READ SMART DATA SECTION ===\n" +
+		"SMART Health Status: OK\n" +
+		"Current Drive Temperature:     0 C\n"
+	if f := parseSmart("/dev/sdk", raw, 80, 90); f.Level != LevelOK {
+		t.Errorf("Health Status OK → %v, want OK (summary %q)", f.Level, f.Summary)
+	}
+	bad := parseSmart("/dev/sdk", "SMART Health Status: FAILED\n", 80, 90)
+	if bad.Level != LevelCritical {
+		t.Errorf("Health Status FAILED → %v, want Critical", bad.Level)
+	}
+}
+
 func TestParseLoad(t *testing.T) {
 	raw := " 14:02:01 up 10 days,  load average: 18.0, 5.0, 4.0\n"
 	f := parseLoad(raw, 8, 2.0)
