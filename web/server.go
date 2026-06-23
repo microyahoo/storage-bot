@@ -73,6 +73,9 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/run", s.basicAuth(s.handleRun))
 	mux.HandleFunc("/clusters/", s.basicAuth(s.handleClusterRoutes))
 	mux.HandleFunc("/storages/", s.basicAuth(s.handleStorageRoutes))
+	mux.HandleFunc("/inspect", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/inspect/", http.StatusFound)
+	})
 	mux.HandleFunc("/inspect/", s.basicAuth(s.handleInspectPage))
 	mux.HandleFunc("/api/inspect/", s.basicAuth(s.handleInspectAPI))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("ok")) })

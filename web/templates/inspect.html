@@ -5,27 +5,195 @@
 <div class="bg-ink-800 border border-line rounded-lg px-5 py-4 text-mute">
   巡检功能未启用。请在 config 中设置 <code>inspect.enabled: true</code> 后重启。
 </div>
+
 {{else if eq .Cluster ""}}
-<div class="bg-ink-800 border border-line rounded-lg px-5 py-4 text-mute">
-  在 URL 指定集群，例如 <code>/inspect/prod-ceph-01</code>，即可触发巡检并查看历史报告。
+<div class="bg-ink-800 border border-line rounded-lg overflow-hidden">
+  <div class="px-5 py-4 border-b border-line">
+    <h2 class="text-sm font-semibold text-slate-100 m-0">选择集群</h2>
+  </div>
+  {{if .Clusters}}
+  <ul class="divide-y divide-line">
+    {{range .Clusters}}
+    <li class="px-5 py-3 flex items-center justify-between hover:bg-white/[0.03] transition">
+      <span class="font-medium text-slate-100">{{.Name}}</span>
+      <a href="/inspect/{{.Name}}" class="text-[13px]">巡检 →</a>
+    </li>
+    {{end}}
+  </ul>
+  {{else}}
+  <div class="py-12 text-center text-mute text-sm">未配置任何 Ceph 集群</div>
+  {{end}}
 </div>
+
 {{else}}
 <div class="bg-ink-800 border border-line rounded-lg px-5 py-4 mb-6">
-  <div class="text-mute text-[11px] uppercase tracking-wider mb-2">立即巡检</div>
-  <form method="post" action="/api/inspect/{{.Cluster}}">
-    <button type="submit" class="px-4 py-2 rounded-md bg-ink-700 text-slate-100 hover:bg-ink-600 text-[13px]">
+  <div class="flex items-center justify-between">
+    <div>
+      <div class="text-mute text-[11px] uppercase tracking-wider mb-1">立即巡检</div>
+      <div class="text-slate-100 font-medium">{{.Cluster}}</div>
+    </div>
+    <button type="button" id="run-btn" onclick="runInspect()"
+      class="px-4 py-2 rounded-md bg-brand-500 text-white hover:bg-brand-600 text-[13px]">
       巡检 {{.Cluster}}
     </button>
-  </form>
-  <div class="text-mute text-[11px] mt-2">巡检结果以 JSON 返回（也可在飞书查看卡片）。</div>
+  </div>
+  <div class="text-mute text-[11px] mt-2">巡检通常需要数分钟，期间请勿关闭页面；结果也会推送到飞书卡片。</div>
 </div>
+
+<div id="report" class="mb-6"></div>
 
 <div class="bg-ink-800 border border-line rounded-lg px-5 py-4">
   <div class="text-mute text-[11px] uppercase tracking-wider mb-2">历史报告（{{.Cluster}}）</div>
-  <ul class="text-[13px] text-slate-200 space-y-1">
-    {{range .History}}<li><code>{{.}}</code></li>{{else}}<li class="text-mute">暂无历史报告</li>{{end}}
+  <ul id="history" class="text-[13px] text-slate-200 space-y-1">
+    {{range .History}}<li><a href="#" onclick="loadReport('{{.}}');return false;"><code>{{.}}</code></a></li>{{else}}<li class="text-mute">暂无历史报告</li>{{end}}
   </ul>
 </div>
+
+<script>
+const CLUSTER = {{.Cluster}};
+
+// Level 是 inspect.Level 的整型序号，对应 inspector.go 的 const 顺序：
+// 0=OK 1=Warn 2=Critical 3=Unknown。
+const LEVEL = {
+  0: {emoji: '🟢', name: '正常',  cls: 'bg-emerald-500/15 text-emerald-400'},
+  1: {emoji: '🟡', name: '警告',  cls: 'bg-amber-500/15 text-amber-400'},
+  2: {emoji: '🔴', name: '严重',  cls: 'bg-rose-500/15 text-rose-400'},
+  3: {emoji: '⚪', name: '未知',  cls: 'bg-slate-500/15 text-slate-300'},
+};
+const lv = n => LEVEL[n] || LEVEL[3];
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"]/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+
+function nodeLabel(f) {
+  if (!f.node) return '';
+  let s = f.node;
+  if (f.node_ip) s += '(' + f.node_ip + ')';
+  return s;
+}
+
+function setBusy(busy) {
+  const b = document.getElementById('run-btn');
+  if (!b) return;
+  b.disabled = busy;
+  b.textContent = busy ? '巡检中…' : '巡检 ' + CLUSTER;
+  b.classList.toggle('opacity-60', busy);
+  b.classList.toggle('cursor-not-allowed', busy);
+}
+
+function renderReport(rep) {
+  const findings = rep.findings || [];
+  const counts = {0:0,1:0,2:0,3:0};
+  findings.forEach(f => counts[f.level] = (counts[f.level]||0) + 1);
+
+  // 异常优先：Critical → Warn → Unknown；正常项折叠。
+  const order = [2, 1, 3];
+  const abnormal = findings
+    .filter(f => f.level !== 0)
+    .sort((a, b) => order.indexOf(a.level) - order.indexOf(b.level));
+
+  const o = lv(rep.overall);
+  let stat = `🔴 严重 ${counts[2]} · 🟡 警告 ${counts[1]} · 🟢 正常 ${counts[0]}`;
+  if (counts[3]) stat += ` · ⚪ 未知 ${counts[3]}`;
+
+  let rows = '';
+  if (abnormal.length === 0) {
+    rows = `<div class="px-5 py-8 text-center text-emerald-400 text-sm">✅ 全部正常</div>`;
+  } else {
+    rows = `<div class="overflow-x-auto"><table class="w-full text-[13px]">
+      <thead><tr class="text-mute text-[11px] uppercase tracking-wider">
+        <th class="text-left px-5 py-3 font-medium">级别</th>
+        <th class="text-left px-5 py-3 font-medium">巡检项</th>
+        <th class="text-left px-5 py-3 font-medium">结论</th>
+      </tr></thead><tbody class="divide-y divide-line">`;
+    abnormal.forEach(f => {
+      const l = lv(f.level);
+      const nl = nodeLabel(f);
+      const item = esc(f.item) + (nl ? ` · ${esc(nl)}` : '');
+      const advice = f.advice ? `<div class="text-mute text-[12px] mt-1">建议：${esc(f.advice)}</div>` : '';
+      rows += `<tr class="hover:bg-white/[0.03] transition">
+        <td class="px-5 py-3 whitespace-nowrap"><span class="inline-block px-2 py-[2px] rounded-full text-[11px] font-semibold ${l.cls}">${l.emoji} ${l.name}</span></td>
+        <td class="px-5 py-3"><code>${item}</code></td>
+        <td class="px-5 py-3 text-slate-100">${esc(f.summary)}${advice}</td>
+      </tr>`;
+    });
+    rows += `</tbody></table></div>`;
+    if (counts[0] > 0) {
+      rows += `<div class="px-5 py-3 border-t border-line text-mute text-[12px]">🟢 其余 ${counts[0]} 项正常</div>`;
+    }
+  }
+
+  const llm = rep.llm_summary
+    ? `<div class="px-5 py-3 border-t border-line text-slate-200 text-[13px]">🤖 ${esc(rep.llm_summary)}</div>`
+    : '';
+  const when = rep.started_at ? new Date(rep.started_at).toLocaleString() : '';
+
+  document.getElementById('report').innerHTML = `
+    <div class="bg-ink-800 border border-line rounded-lg overflow-hidden">
+      <div class="px-5 py-4 border-b border-line flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span class="inline-block px-2.5 py-1 rounded-full text-xs font-semibold ${o.cls}">${o.emoji} ${o.name}</span>
+          <span class="text-slate-100 font-medium">${esc(rep.cluster)}</span>
+        </div>
+        <span class="text-mute text-[12px]">${esc(when)}</span>
+      </div>
+      <div class="px-5 py-3 border-b border-line text-slate-200 text-[13px]">${stat}</div>
+      ${rows}
+      ${llm}
+    </div>`;
+  document.getElementById('report').scrollIntoView({behavior: 'smooth', block: 'nearest'});
+}
+
+function showError(msg) {
+  document.getElementById('report').innerHTML =
+    `<div class="bg-rose-500/10 border border-rose-500/30 text-rose-300 px-4 py-3 rounded-md text-[13px]">${esc(msg)}</div>`;
+}
+
+async function runInspect() {
+  setBusy(true);
+  document.getElementById('report').innerHTML =
+    `<div class="bg-ink-800 border border-line rounded-lg px-5 py-8 text-center text-mute text-sm">巡检进行中，请稍候…</div>`;
+  try {
+    const resp = await fetch('/api/inspect/' + encodeURIComponent(CLUSTER), {method: 'POST'});
+    const data = await resp.json();
+    if (!resp.ok) { showError(data.error || ('HTTP ' + resp.status)); return; }
+    renderReport(data);
+    // 刷新历史列表以纳入本次结果。
+    setTimeout(refreshHistory, 500);
+  } catch (e) {
+    showError('请求失败：' + e);
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function loadReport(file) {
+  document.getElementById('report').innerHTML =
+    `<div class="bg-ink-800 border border-line rounded-lg px-5 py-8 text-center text-mute text-sm">加载中…</div>`;
+  try {
+    const resp = await fetch('/api/inspect/' + encodeURIComponent(CLUSTER) + '/' + encodeURIComponent(file));
+    const data = await resp.json();
+    if (!resp.ok) { showError(data.error || ('HTTP ' + resp.status)); return; }
+    renderReport(data);
+  } catch (e) {
+    showError('请求失败：' + e);
+  }
+}
+
+async function refreshHistory() {
+  try {
+    const resp = await fetch('/api/inspect/' + encodeURIComponent(CLUSTER));
+    const list = await resp.json();
+    if (!Array.isArray(list)) return;
+    const ul = document.getElementById('history');
+    if (list.length === 0) { ul.innerHTML = '<li class="text-mute">暂无历史报告</li>'; return; }
+    ul.innerHTML = list.map(f =>
+      `<li><a href="#" onclick="loadReport('${esc(f)}');return false;"><code>${esc(f)}</code></a></li>`).join('');
+  } catch (e) { /* 历史刷新失败不致命 */ }
+}
+</script>
 {{end}}
 {{end}}
 
