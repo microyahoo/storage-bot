@@ -34,7 +34,7 @@ var dangerousPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\bwget\b.*\|\s*(ba)?sh\b`),
 	regexp.MustCompile(`(?i)\beval\b`),
 	regexp.MustCompile(`(?i)\bexec\b.*</dev/tcp`),
-	regexp.MustCompile(`(?i)\bnc\s+-[a-z]*l`),  // netcat listen
+	regexp.MustCompile(`(?i)\bnc\s+-[a-z]*l`), // netcat listen
 	regexp.MustCompile(`(?i)\bpython\b.*-c\b`),
 	regexp.MustCompile(`(?i)\bperl\b.*-e\b`),
 	regexp.MustCompile(`(?i)\bruby\b.*-e\b`),
@@ -154,6 +154,7 @@ func ValidateSSHCommand(cmd string) error {
 				"find": true, "ls": true, "stat": true,
 				"smartctl": true, "lsblk": true, "blkid": true,
 				"top": true, "vmstat": true, "mpstat": true,
+				"nproc": true, "lscpu": true,
 				"echo": true, "awk": true, "sed": true, "sort": true,
 				"uniq": true, "wc": true, "tr": true, "cut": true,
 				"ceph": true, "rbd": true, "rados": true,

@@ -19,6 +19,7 @@ import (
 	"github.com/microyahoo/storage-bot/cluster"
 	"github.com/microyahoo/storage-bot/config"
 	"github.com/microyahoo/storage-bot/executor"
+	"github.com/microyahoo/storage-bot/inspect"
 	"github.com/microyahoo/storage-bot/intent"
 	"github.com/microyahoo/storage-bot/security"
 	"github.com/microyahoo/storage-bot/skill"
@@ -26,18 +27,20 @@ import (
 )
 
 type Handler struct {
-	feishuClient *lark.Client
-	clusterMgr   *cluster.Manager
-	sshExec      *executor.SSHExecutor
-	analyzer     *analyzer.Analyzer
-	llm          analyzer.LLMProvider
-	skills       *skill.Registry
-	restStorages map[string]*storage.RESTSkill
-	audit        *security.AuditLog
-	dev          config.DevConfig
-	kubeCache    map[string]*executor.KubeExecutor
-	mu           sync.Mutex
-	llmDisabled  atomic.Bool // runtime toggle; initialized from dev.DisableLLM
+	feishuClient  *lark.Client
+	clusterMgr    *cluster.Manager
+	sshExec       *executor.SSHExecutor
+	analyzer      *analyzer.Analyzer
+	llm           analyzer.LLMProvider
+	skills        *skill.Registry
+	restStorages  map[string]*storage.RESTSkill
+	audit         *security.AuditLog
+	dev           config.DevConfig
+	kubeCache     map[string]*executor.KubeExecutor
+	inspectRunner *inspect.Runner // nil when inspection is disabled
+	webBase       string          // external web base URL for report links (may be empty)
+	mu            sync.Mutex
+	llmDisabled   atomic.Bool // runtime toggle; initialized from dev.DisableLLM
 }
 
 type HandlerOption func(*Handler)
@@ -60,6 +63,15 @@ func WithAudit(audit *security.AuditLog) HandlerOption {
 
 func WithDev(dev config.DevConfig) HandlerOption {
 	return func(h *Handler) { h.dev = dev }
+}
+
+// WithInspectRunner injects the cluster-inspection runner and the external web
+// base URL used for report links in cards. webBase may be empty.
+func WithInspectRunner(r *inspect.Runner, webBase string) HandlerOption {
+	return func(h *Handler) {
+		h.inspectRunner = r
+		h.webBase = webBase
+	}
 }
 
 func NewHandler(feishuClient *lark.Client, mgr *cluster.Manager, sshExec *executor.SSHExecutor, opts ...HandlerOption) *Handler {
@@ -161,6 +173,7 @@ func (h *Handler) HandleMessage(ctx context.Context, event *larkim.P2MessageRece
 		"cluster", action.ClusterName,
 		"node", action.NodeName,
 		"storage", action.StorageName,
+		"args", action.Args,
 	)
 
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
@@ -190,6 +203,8 @@ func (h *Handler) HandleMessage(ctx context.Context, event *larkim.P2MessageRece
 		reply, err = h.handleNodeDiag(ctx, action)
 	case intent.ActionRESTStorage:
 		reply, err = h.handleRESTStorage(ctx, action)
+	case intent.ActionInspect:
+		reply, err = h.handleInspect(ctx, action)
 	}
 
 	status := "ok"
@@ -339,6 +354,10 @@ func (h *Handler) helpMessage() string {
 		"- 健康检查：`check cluster-01` / `看看01集群怎么了`\n" +
 		"- 日志分析：`analyze logs cluster-01`\n" +
 		"- 节点诊断：`check node-1 cluster-01`\n\n" +
+		"**🔍 集群巡检**（Ceph 状态 + 节点硬件，结构化报告）\n" +
+		"- 单集群：`巡检 cluster-01` / `inspect cluster-01` / `体检 cluster-01`\n" +
+		"- 全部集群：`巡检所有集群` / `inspect all clusters`\n" +
+		"- 查群 chat_id（配置定时推送用）：`chatid` / `群id`\n\n" +
 		"**⚙️ Skill 执行**\n" +
 		"- 单集群：`osd cluster-01` / `cluster-02 容量`\n" +
 		"- 批量（仅 set/unset nobackfill/noout）：\n" +
@@ -357,6 +376,10 @@ func (h *Handler) helpMessage() string {
 		"**📈 RGW PG 优化**\n" +
 		"- `optimize rgw cluster-01`（默认 max=100）\n" +
 		"- `optimize rgw cluster-01 max=50`\n\n" +
+		"**♻️ 重启 mon / mgr**（删除 pod，rook 自动重建；写操作需 `--yes`）\n" +
+		"- 列出候选：`重启 mon cluster-01` / `restart mgr cluster-01`\n" +
+		"- 预览：`重启 mon a cluster-01`（显示将删的 pod，不执行）\n" +
+		"- 执行：`重启 mon a cluster-01 --yes` / `restart mgr b cluster-01 --yes`\n\n" +
 		"**🤖 LLM 开关**\n" +
 		"- `enable llm` / `开启llm`\n" +
 		"- `disable llm` / `关闭llm`\n\n" +
@@ -375,6 +398,7 @@ func (h *Handler) helpMessage() string {
 		"**💡 示例**\n" +
 		"```\n" +
 		"@bot 帮我看看cluster-01的状态\n" +
+		"@bot 巡检 cluster-01\n" +
 		"@bot 分析一下cluster-02的日志\n" +
 		"@bot iostat cdn bd-cdn-node02\n" +
 		"@bot kernel cdn bd-cdn-node02 keyword=link\n" +
@@ -622,6 +646,8 @@ var noAnalysisSkills = map[string]bool{
 	"kernel_logs":       true,
 	"nic_info":          true,
 	"bond_status":       true,
+	"restart_mon":       true,
+	"restart_mgr":       true,
 }
 
 func needsAnalysis(skillName string) bool {
@@ -686,6 +712,60 @@ func (h *Handler) dryRunReply(clusterName, action, willDo string) string {
 // isGateway reports whether node is the gateway itself (same IP, ignoring port).
 func isGateway(nodeHost, gwHost string) bool {
 	return executor.HostIP(nodeHost) == executor.HostIP(gwHost)
+}
+
+// handleInspect runs cluster inspection. action.ClusterName == "" means all
+// clusters. Each cluster's report is rendered to text; cardForAction wraps the
+// combined body into one inspection card.
+func (h *Handler) handleInspect(ctx context.Context, action intent.Action) (string, error) {
+	if h.inspectRunner == nil {
+		return "巡检功能未启用（设置 config inspect.enabled: true）", nil
+	}
+	var targets []string
+	if action.ClusterName != "" {
+		targets = []string{action.ClusterName}
+	} else {
+		targets = h.clusterMgr.List()
+	}
+	if len(targets) == 0 {
+		return "没有可巡检的集群", nil
+	}
+	var b strings.Builder
+	for _, name := range targets {
+		rep, err := h.inspectRunner.Run(ctx, name)
+		if err != nil {
+			fmt.Fprintf(&b, "❌ %s 巡检失败：%v\n\n", name, err)
+			continue
+		}
+		b.WriteString(rep.RenderText())
+		b.WriteString("\n")
+	}
+	return b.String(), nil
+}
+
+// NotifyReport sends a report card to a specific chat. Implements inspect.Notifier
+// so the scheduler can push proactively (independent of any incoming message).
+func (h *Handler) NotifyReport(ctx context.Context, chatID string, rep *inspect.Report) error {
+	content, err := rep.RenderCard(h.webBase).JSON()
+	if err != nil {
+		return fmt.Errorf("build inspect card: %w", err)
+	}
+	resp, err := h.feishuClient.Im.Message.Create(ctx,
+		larkim.NewCreateMessageReqBuilder().
+			ReceiveIdType("chat_id").
+			Body(larkim.NewCreateMessageReqBodyBuilder().
+				ReceiveId(chatID).
+				MsgType("interactive").
+				Content(content).
+				Build()).
+			Build())
+	if err != nil {
+		return fmt.Errorf("send inspect card: %w", err)
+	}
+	if !resp.Success() {
+		return fmt.Errorf("send inspect card failed: code=%d, msg=%s", resp.Code, resp.Msg)
+	}
+	return nil
 }
 
 func (h *Handler) replyCard(ctx context.Context, messageID string, c *card.Card) error {
@@ -754,6 +834,8 @@ func cardForAction(action intent.Action, body string, err error) *card.Card {
 		return card.New("⚙️", titleWithCluster(t, action.ClusterName), card.ThemeBlue).Body(body)
 	case intent.ActionRESTStorage:
 		return card.New("📦", titleWithCluster("焱融存储", action.StorageName), card.ThemeTurquoise).Body(body)
+	case intent.ActionInspect:
+		return card.New("🔍", titleWithCluster("集群巡检", action.ClusterName), card.ThemeTurquoise).Body(body)
 	default:
 		return card.New("💬", "Storage Bot", card.ThemeBlue).Body(body)
 	}

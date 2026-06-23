@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	cron "github.com/robfig/cron/v3"
 	"gopkg.in/yaml.v3"
 )
 
@@ -14,6 +15,31 @@ type Config struct {
 	Web          WebConfig                     `yaml:"web"`
 	Clusters     map[string]*ClusterConfig     `yaml:"clusters"`
 	RESTStorages map[string]*RESTStorageConfig `yaml:"rest_storages"`
+	Inspect      InspectConfig                 `yaml:"inspect"`
+}
+
+type InspectConfig struct {
+	Enabled        bool       `yaml:"enabled"`
+	Schedule       string     `yaml:"schedule"`
+	Clusters       []string   `yaml:"clusters"`
+	NotifyChat     string     `yaml:"notify_chat"`
+	NotifyMinLevel string     `yaml:"notify_min_level"`
+	LLMSummary     bool       `yaml:"llm_summary"`
+	HistoryDir     string     `yaml:"history_dir"`
+	HistoryKeep    int        `yaml:"history_keep"`
+	Thresholds     Thresholds `yaml:"thresholds"`
+}
+
+type Thresholds struct {
+	CapacityWarnPct int     `yaml:"capacity_warn_pct"`
+	CapacityCritPct int     `yaml:"capacity_crit_pct"`
+	MemWarnPct      int     `yaml:"mem_warn_pct"`
+	MemCritPct      int     `yaml:"mem_crit_pct"`
+	FsWarnPct       int     `yaml:"fs_warn_pct"`
+	FsCritPct       int     `yaml:"fs_crit_pct"`
+	DiskLifeWarnPct int     `yaml:"disk_life_warn_pct"`
+	DiskLifeCritPct int     `yaml:"disk_life_crit_pct"`
+	LoadWarnRatio   float64 `yaml:"load_warn_ratio"`
 }
 
 // WebConfig configures the admin web UI. If Listen is empty, the web server is disabled.
@@ -149,6 +175,13 @@ func Load(path string) (*Config, error) {
 		}
 	}
 
+	if cfg.Inspect.Enabled {
+		applyInspectDefaults(&cfg.Inspect)
+		if err := validateInspect(&cfg.Inspect); err != nil {
+			return nil, err
+		}
+	}
+
 	return &cfg, nil
 }
 
@@ -165,4 +198,59 @@ func defaultModel(provider string) string {
 	default:
 		return ""
 	}
+}
+
+func applyInspectDefaults(c *InspectConfig) {
+	t := &c.Thresholds
+	if t.CapacityWarnPct == 0 {
+		t.CapacityWarnPct = 80
+	}
+	if t.CapacityCritPct == 0 {
+		t.CapacityCritPct = 90
+	}
+	if t.MemWarnPct == 0 {
+		t.MemWarnPct = 90
+	}
+	if t.MemCritPct == 0 {
+		t.MemCritPct = 95
+	}
+	if t.FsWarnPct == 0 {
+		t.FsWarnPct = 85
+	}
+	if t.FsCritPct == 0 {
+		t.FsCritPct = 90
+	}
+	if t.DiskLifeWarnPct == 0 {
+		t.DiskLifeWarnPct = 80
+	}
+	if t.DiskLifeCritPct == 0 {
+		t.DiskLifeCritPct = 90
+	}
+	if t.LoadWarnRatio == 0 {
+		t.LoadWarnRatio = 2.0
+	}
+	if c.NotifyMinLevel == "" {
+		c.NotifyMinLevel = "warn"
+	}
+	if c.HistoryDir == "" {
+		c.HistoryDir = "./inspect-reports"
+	}
+	if c.HistoryKeep == 0 {
+		c.HistoryKeep = 30
+	}
+}
+
+func validateInspect(c *InspectConfig) error {
+	if c.Schedule == "" {
+		return fmt.Errorf("inspect.schedule is required when inspect.enabled")
+	}
+	if _, err := cron.ParseStandard(c.Schedule); err != nil {
+		return fmt.Errorf("inspect.schedule invalid cron %q: %w", c.Schedule, err)
+	}
+	switch c.NotifyMinLevel {
+	case "warn", "critical":
+	default:
+		return fmt.Errorf("inspect.notify_min_level must be warn or critical, got %q", c.NotifyMinLevel)
+	}
+	return nil
 }

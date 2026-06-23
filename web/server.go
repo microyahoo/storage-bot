@@ -18,6 +18,7 @@ import (
 
 	"github.com/microyahoo/storage-bot/bot"
 	"github.com/microyahoo/storage-bot/config"
+	"github.com/microyahoo/storage-bot/inspect"
 )
 
 //go:embed templates/*.html
@@ -37,13 +38,23 @@ type Server struct {
 
 	// inFlight protects against accidental double-submit of the run form.
 	inFlight atomic.Int32
+
+	inspectRunner *inspect.Runner // nil when inspection is disabled
+	inspectStore  *inspect.Store  // nil when inspection is disabled
+}
+
+// SetInspect injects the inspection runner and history store (called from main
+// when inspect.enabled). Safe to leave unset — handlers degrade gracefully.
+func (s *Server) SetInspect(r *inspect.Runner, store *inspect.Store) {
+	s.inspectRunner = r
+	s.inspectStore = store
 }
 
 func NewServer(cfg config.WebConfig, h *bot.Handler, llmState LLMState) (*Server, error) {
 	// Parse one template set per page so each page's {{define "content"}} only
 	// affects its own set. Putting layout + every page in one set causes their
 	// "content" definitions to clobber each other (last one wins).
-	pages := []string{"home.html", "skills.html", "cluster.html", "nodes.html", "health.html", "run.html", "storage.html", "storage_output.html"}
+	pages := []string{"home.html", "skills.html", "cluster.html", "nodes.html", "health.html", "run.html", "storage.html", "storage_output.html", "inspect.html"}
 	templates := make(map[string]*template.Template, len(pages))
 	for _, page := range pages {
 		tpl, err := template.ParseFS(templatesFS, "templates/layout.html", "templates/"+page)
@@ -62,6 +73,8 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/run", s.basicAuth(s.handleRun))
 	mux.HandleFunc("/clusters/", s.basicAuth(s.handleClusterRoutes))
 	mux.HandleFunc("/storages/", s.basicAuth(s.handleStorageRoutes))
+	mux.HandleFunc("/inspect/", s.basicAuth(s.handleInspectPage))
+	mux.HandleFunc("/api/inspect/", s.basicAuth(s.handleInspectAPI))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("ok")) })
 
 	srv := &http.Server{
@@ -422,14 +435,14 @@ func (s *Server) renderStorageOutput(w http.ResponseWriter, r *http.Request, sum
 func (s *Server) renderStorageUser(w http.ResponseWriter, r *http.Request, summary bot.RESTStorageSummary) {
 	data := struct {
 		baseData
-		Storage      bot.RESTStorageSummary
-		User         string
-		Scope        string
-		Path         string
-		Executed     bool
-		Output       string
-		Error        string
-		BackURL      string
+		Storage  bot.RESTStorageSummary
+		User     string
+		Scope    string
+		Path     string
+		Executed bool
+		Output   string
+		Error    string
+		BackURL  string
 	}{
 		baseData: baseData{Title: summary.Name + " — 用户目录", Page: "home"},
 		Storage:  summary,
@@ -516,9 +529,9 @@ func outputData(summary bot.RESTStorageSummary, label, output, errMsg string) an
 
 // renderStorageRecycles drives the recycle-bin page. It has three modes:
 //
-//   GET  /storages/<name>/recycles                       → list every bin
-//   GET  /storages/<name>/recycles?path=/foo             → list files under /foo
-//   POST /storages/<name>/recycles (path, confirm=on)    → clear under /foo
+//	GET  /storages/<name>/recycles                       → list every bin
+//	GET  /storages/<name>/recycles?path=/foo             → list files under /foo
+//	POST /storages/<name>/recycles (path, confirm=on)    → clear under /foo
 //
 // Real clear (confirm checked) is restricted by the storage layer to paths under
 // public_user_prefix / private_user_prefix. Without confirm, the backend returns

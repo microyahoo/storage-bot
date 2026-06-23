@@ -18,6 +18,7 @@ import (
 	"github.com/microyahoo/storage-bot/cluster"
 	"github.com/microyahoo/storage-bot/config"
 	"github.com/microyahoo/storage-bot/executor"
+	"github.com/microyahoo/storage-bot/inspect"
 	"github.com/microyahoo/storage-bot/security"
 	"github.com/microyahoo/storage-bot/skill"
 	"github.com/microyahoo/storage-bot/storage"
@@ -68,16 +69,39 @@ func main() {
 	skills := skill.NewRegistry()
 	audit := security.NewAuditLog(10000)
 
+	// Cluster inspection (optional). Build runner+store first so the handler can
+	// receive the runner for chat-triggered inspections.
+	var (
+		inspectRunner *inspect.Runner
+		inspectStore  *inspect.Store
+	)
+	if cfg.Inspect.Enabled {
+		inspectStore = inspect.NewStore(cfg.Inspect.HistoryDir, cfg.Inspect.HistoryKeep)
+		inspectRunner = inspect.NewRunner(inspect.NewRegistry(), clusterMgr, sshExec, az,
+			cfg.Inspect.Thresholds, cfg.Inspect.LLMSummary, inspectStore)
+	}
+
+	// webBase for report links is left empty: cfg.Web.Listen is a bind address
+	// (e.g. ":8080"), not an externally reachable URL, so it would produce a
+	// broken link. Cards omit the report link when webBase is empty.
 	handler := bot.NewHandler(feishuClient, clusterMgr, sshExec,
 		bot.WithAnalyzer(az),
 		bot.WithLLM(llmProvider),
 		bot.WithSkills(skills),
 		bot.WithAudit(audit),
 		bot.WithDev(cfg.Dev),
+		bot.WithInspectRunner(inspectRunner, ""),
 	)
 
 	// Register REST storage backends (Yanrong only).
 	handler.ReplaceRESTStorages(buildRESTStorages(cfg.RESTStorages))
+
+	// Inspection scheduler (cron). handler implements inspect.Notifier so the
+	// scheduler can push report cards to the configured chat.
+	var inspectScheduler *inspect.Scheduler
+	if cfg.Inspect.Enabled {
+		inspectScheduler = inspect.NewScheduler(inspectRunner, cfg.Inspect, clusterMgr, handler, "")
+	}
 
 	// Config hot-reload: watch file changes + SIGHUP
 	watcher := config.NewWatcher(*configPath)
@@ -85,6 +109,9 @@ func main() {
 		clusterMgr.Reload(newCfg.Clusters)
 		handler.InvalidateKubeCache()
 		handler.ReplaceRESTStorages(buildRESTStorages(newCfg.RESTStorages))
+		if inspectScheduler != nil {
+			inspectScheduler.Reload(newCfg.Inspect)
+		}
 		slog.Info("config reloaded",
 			"clusters", len(newCfg.Clusters),
 			"rest_storages", len(newCfg.RESTStorages),
@@ -132,11 +159,19 @@ func main() {
 
 	go watcher.Start(ctx)
 
+	if inspectScheduler != nil {
+		go inspectScheduler.Start(ctx)
+		slog.Info("cluster inspection enabled", "schedule", cfg.Inspect.Schedule)
+	}
+
 	if cfg.Web.Listen != "" {
 		webSrv, err := web.NewServer(cfg.Web, handler, handler)
 		if err != nil {
 			slog.Error("failed to init web server", "error", err)
 			os.Exit(1)
+		}
+		if cfg.Inspect.Enabled {
+			webSrv.SetInspect(inspectRunner, inspectStore)
 		}
 		go func() {
 			if err := webSrv.Start(ctx); err != nil {

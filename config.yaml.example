@@ -102,3 +102,24 @@ rest_storages:
       password: "Passw0rd"
       public_user_prefix: "/public-data/user/"
       private_user_prefix: "/drtraining/user/"
+
+# 集群巡检（可选）。enabled: false 时整套巡检不启动。
+inspect:
+    enabled: false
+    schedule: "0 3 * * *"          # 标准 5 字段 cron，每天 03:00
+    clusters: []                    # 空 = 全部集群；或 ["cluster-01"]
+    notify_chat: ""                 # 飞书 chat_id；有发现（≥ notify_min_level）才推送
+    notify_min_level: warn          # warn | critical
+    llm_summary: false              # 是否调 LLM 生成总结（复用 analyzer）
+    history_dir: ./inspect-reports  # 历史报告目录
+    history_keep: 30                # 每集群保留份数
+    thresholds:                     # 留空用默认值
+      capacity_warn_pct: 80
+      capacity_crit_pct: 90
+      mem_warn_pct: 90
+      mem_crit_pct: 95
+      fs_warn_pct: 85
+      fs_crit_pct: 90
+      disk_life_warn_pct: 80
+      disk_life_crit_pct: 90
+      load_warn_ratio: 2.0

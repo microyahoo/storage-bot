@@ -24,6 +24,7 @@ const (
 	ActionListSkills
 	ActionRESTStorage // query a non-Ceph REST storage system
 	ActionToggleLLM   // enable/disable LLM at runtime
+	ActionInspect     // run cluster inspection
 )
 
 func (t ActionType) String() string {
@@ -46,6 +47,8 @@ func (t ActionType) String() string {
 		return "rest storage"
 	case ActionToggleLLM:
 		return "toggle llm"
+	case ActionInspect:
+		return "inspect"
 	default:
 		return "unknown"
 	}
@@ -87,6 +90,19 @@ func ParseWithAll(message string, knownClusters []string, knownSkills []string, 
 		return action
 	}
 
+	// Inspection — checked before skill aliases so trigger words 巡检/体检/检查
+	// are not swallowed by coarser skill matches (e.g. "检查容量" must run a full
+	// inspection, not the capacity skill). Empty ClusterName means "all clusters".
+	// "inspect" matches "inspection" too (substring).
+	if strings.Contains(lower, "巡检") || strings.Contains(lower, "体检") ||
+		strings.Contains(lower, "inspect") {
+		action.Type = ActionInspect
+		if !strings.Contains(lower, "所有") && !strings.Contains(lower, "全部") && !strings.Contains(lower, "all") {
+			action.ClusterName = extractClusterName(lower, knownClusters)
+		}
+		return action
+	}
+
 	// Skill alias table — checked FIRST so multi-word skill commands (e.g. "unset nobackfill all",
 	// "list nodes cdn") are not swallowed by the coarser "list clusters" or NodeDiag checks below.
 	// Rules:
@@ -97,6 +113,9 @@ func ParseWithAll(message string, knownClusters []string, knownSkills []string, 
 		aliases []string
 	}
 	skillAliasTable := []aliasEntry{
+		// restart_* first: "重启 mon a" must not be hijacked by mon_status (alias "mon").
+		{"restart_mon", []string{"重启mon", "重启 mon", "restart mon", "restart_mon", "重启监视器"}},
+		{"restart_mgr", []string{"重启mgr", "重启 mgr", "restart mgr", "restart_mgr"}},
 		// unset before set (avoids "unset nobackfill" matching "set nobackfill")
 		{"unset_no_backfill", []string{"unset nobackfill", "unset no_backfill", "unset_no_backfill", "取消nobackfill", "恢复迁移", "恢复backfill"}},
 		{"unset_noout", []string{"unset noout", "unset_noout", "取消noout"}},
@@ -125,6 +144,54 @@ func ParseWithAll(message string, knownClusters []string, knownSkills []string, 
 			if lower == entry.skill || strings.Contains(lower, alias) {
 				action.Type = ActionSkill
 				action.SkillName = entry.skill
+
+				// restart_mon/mgr: a message looks like "restart mon a cdn" (with
+				// id) or "restart mon cdn" (no id → list candidates). Both the id
+				// (a/b/c) and the cluster (cdn) are short tokens, so resolve the
+				// CLUSTER first (it's a known set, a reliable anchor), then treat
+				// any leftover token between the daemon keyword and the cluster as
+				// the id.
+				if entry.skill == "restart_mon" || entry.skill == "restart_mgr" {
+					action.Args = map[string]string{}
+					daemon := strings.TrimPrefix(entry.skill, "restart_") // "mon" / "mgr"
+
+					cluster := extractClusterName(lower, knownClusters)
+					action.ClusterName = cluster
+
+					if strings.Contains(lower, "--yes") || strings.Contains(lower, "确认") {
+						action.Args["yes"] = "true"
+					}
+
+					// Strip daemon keyword, cluster name, --yes, the verb and
+					// punctuation; whatever short alnum token remains is the id.
+					cleaned := lower
+					// fmt.Println(cleaned) // eg: restart mon b cdn --yes
+					cleaned = strings.ReplaceAll(cleaned, "--yes", " ")
+					// fmt.Println(cleaned) // eg: restart mon b cdn
+					if cluster != "" {
+						cleaned = strings.ReplaceAll(cleaned, strings.ToLower(cluster), " ")
+					}
+					// fmt.Println(cleaned) // eg: restart mon b
+					for _, w := range []string{"restart", "重启", "确认", daemon} {
+						cleaned = strings.ReplaceAll(cleaned, w, " ")
+					}
+					// fmt.Println(cleaned) // eg: b
+					for _, tok := range strings.Fields(cleaned) {
+						if len(tok) > 3 || !isAlnum(tok) {
+							continue
+						}
+						// A token that is a substring of some known cluster name is
+						// a cluster shorthand (e.g. "cdn" for "cdn-01"), not a daemon
+						// id — don't mistake it for the id.
+						if action.ClusterName == "" && isClusterFragment(tok, knownClusters) {
+							continue
+						}
+						action.Args["id"] = tok
+						break
+					}
+					return action
+				}
+
 				action.ClusterName, action.ExcludeClusters = extractClusterTarget(lower, knownClusters)
 				if entry.skill != "list_nodes" {
 					action.NodeName = extractNodeName(lower, knownClusters)
@@ -423,6 +490,31 @@ func isNumeric(s string) bool {
 		}
 	}
 	return true
+}
+
+// isAlnum reports whether s is non-empty and all ASCII letters/digits.
+func isAlnum(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if !(r >= 'a' && r <= 'z') && !(r >= 'A' && r <= 'Z') && !(r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return true
+}
+
+// isClusterFragment reports whether tok appears as a substring of any known
+// cluster name. Used to avoid mistaking a cluster shorthand (e.g. "cdn" for
+// "cdn-01") for a daemon id when parsing restart_mon/mgr.
+func isClusterFragment(tok string, knownClusters []string) bool {
+	for _, name := range knownClusters {
+		if strings.Contains(strings.ToLower(name), tok) {
+			return true
+		}
+	}
+	return false
 }
 
 // extractSkillArgs parses named numeric parameters from the message.

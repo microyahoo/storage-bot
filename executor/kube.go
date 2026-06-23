@@ -259,3 +259,46 @@ func (k *KubeExecutor) execInPod(ctx context.Context, podName string, command []
 	}
 	return output, nil
 }
+
+// CephPod identifies a rook-ceph daemon pod.
+type CephPod struct {
+	Name     string // pod name, e.g. rook-ceph-mon-a-6d65b869b4-h876c
+	DaemonID string // daemon id parsed from labels, e.g. "a"
+	Node     string // node the pod runs on
+	Status   string // pod phase, e.g. Running
+}
+
+// ListCephPods lists rook-ceph daemon pods for "mon" or "mgr". It selects by the
+// rook label app=rook-ceph-<daemon> and reads the per-daemon id from the
+// ceph_daemon_id / mon / mgr labels (rook sets app + a daemon-id label).
+func (k *KubeExecutor) ListCephPods(ctx context.Context, daemon string) ([]CephPod, error) {
+	pods, err := k.clientset.CoreV1().Pods(k.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "app=rook-ceph-" + daemon,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list %s pods: %w", daemon, err)
+	}
+	out := make([]CephPod, 0, len(pods.Items))
+	for _, p := range pods.Items {
+		id := p.Labels["ceph_daemon_id"]
+		if id == "" {
+			id = p.Labels[daemon] // rook also sets a label keyed by daemon type (mon=a / mgr=a)
+		}
+		out = append(out, CephPod{
+			Name:     p.Name,
+			DaemonID: id,
+			Node:     p.Spec.NodeName,
+			Status:   string(p.Status.Phase),
+		})
+	}
+	return out, nil
+}
+
+// DeletePod deletes a pod by name in the executor's namespace. rook recreates
+// mon/mgr pods automatically, so this acts as a restart.
+func (k *KubeExecutor) DeletePod(ctx context.Context, name string) error {
+	if err := k.clientset.CoreV1().Pods(k.namespace).Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
+		return fmt.Errorf("delete pod %s: %w", name, err)
+	}
+	return nil
+}
