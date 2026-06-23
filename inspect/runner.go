@@ -100,6 +100,9 @@ func (r *Runner) runWith(ctx context.Context, name string, ke *executor.KubeExec
 						if f.Node == "" {
 							f.Node = node.Name
 						}
+						if f.NodeIP == "" {
+							f.NodeIP = executor.HostIP(node.Host)
+						}
 						local = append(local, f)
 					}
 				}

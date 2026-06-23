@@ -52,6 +52,7 @@ const (
 type Finding struct {
 	Item    string            `json:"item"`
 	Node    string            `json:"node,omitempty"`
+	NodeIP  string            `json:"node_ip,omitempty"`
 	Level   Level             `json:"level"`
 	Summary string            `json:"summary"`
 	Metrics map[string]string `json:"metrics,omitempty"`

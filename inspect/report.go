@@ -55,7 +55,11 @@ func (r *Report) Abnormal() []Finding {
 
 func itemLabel(f Finding) string {
 	if f.Node != "" {
-		return f.Item + " · " + f.Node
+		label := f.Item + " · " + f.Node
+		if f.NodeIP != "" {
+			label += "(" + f.NodeIP + ")"
+		}
+		return label
 	}
 	return f.Item
 }
