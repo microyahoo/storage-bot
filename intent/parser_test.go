@@ -134,3 +134,64 @@ func TestExtractClusterTarget(t *testing.T) {
 		})
 	}
 }
+
+func TestParseNICDown(t *testing.T) {
+	clusters := []string{"cdn", "cluster-01"}
+
+	cases := []struct {
+		msg         string
+		wantCluster string
+		wantNode    string
+		wantEth     string
+		wantYes     bool
+	}{
+		{"nic down cdn bd-cdn-node02 eth0 --yes", "cdn", "bd-cdn-node02", "eth0", true},
+		{"nic down cdn bd-cdn-node02 eth0", "cdn", "bd-cdn-node02", "eth0", false},
+		{"网口down cdn bd-cdn-node02 ens1f0 --yes", "cdn", "bd-cdn-node02", "ens1f0", true},
+		{"ip link set eth1 down cluster-01 storage-node01 确认", "cluster-01", "storage-node01", "eth1", true},
+		// no interface token → eth stays empty, skill still resolves
+		{"nic down cdn bd-cdn-node02", "cdn", "bd-cdn-node02", "", false},
+	}
+
+	for _, c := range cases {
+		t.Run(c.msg, func(t *testing.T) {
+			action := ParseWithAll(c.msg, clusters, nil, nil)
+			if action.Type != ActionSkill || action.SkillName != "nic_down" {
+				t.Fatalf("msg=%q: got type=%v skill=%q, want ActionSkill nic_down", c.msg, action.Type, action.SkillName)
+			}
+			if action.ClusterName != c.wantCluster {
+				t.Errorf("msg=%q: cluster=%q, want %q", c.msg, action.ClusterName, c.wantCluster)
+			}
+			if action.NodeName != c.wantNode {
+				t.Errorf("msg=%q: node=%q, want %q", c.msg, action.NodeName, c.wantNode)
+			}
+			if action.Args["eth"] != c.wantEth {
+				t.Errorf("msg=%q: eth=%q, want %q", c.msg, action.Args["eth"], c.wantEth)
+			}
+			if (action.Args["yes"] == "true") != c.wantYes {
+				t.Errorf("msg=%q: yes=%q, want %v", c.msg, action.Args["yes"], c.wantYes)
+			}
+		})
+	}
+}
+
+// nic_down must not hijack the read-only nic_info / bond_status skills.
+func TestNICDownDoesNotHijackReadSkills(t *testing.T) {
+	clusters := []string{"cdn"}
+	cases := []struct {
+		msg       string
+		wantSkill string
+	}{
+		{"nic cdn bd-cdn-node02", "nic_info"},
+		{"网卡 cdn bd-cdn-node02", "nic_info"},
+		{"bond cdn bd-cdn-node02", "bond_status"},
+	}
+	for _, c := range cases {
+		t.Run(c.msg, func(t *testing.T) {
+			action := ParseWithAll(c.msg, clusters, nil, nil)
+			if action.SkillName != c.wantSkill {
+				t.Errorf("msg=%q: skill=%q, want %q", c.msg, action.SkillName, c.wantSkill)
+			}
+		})
+	}
+}

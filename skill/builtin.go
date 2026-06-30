@@ -321,82 +321,92 @@ func (s *BondStatus) Execute(sc *Context) (string, error) {
 	return strings.Join(results, "\n\n"), nil
 }
 
-// formatBondReport reshapes grep output of the form
+// bondSlave is one bond member port and its last-seen MII status / failure count.
+type bondSlave struct {
+	name      string
+	miiStatus string
+	failures  string
+}
+
+// bondInfo is a single bond and its ordered member ports.
+type bondInfo struct {
+	name   string
+	mode   string
+	slaves []*bondSlave
+}
+
+// parseBonds parses grep output of /proc/net/bonding/bond* lines of the form
 //
 //	/proc/net/bonding/bond0:Bonding Mode: IEEE 802.3ad ...
 //	/proc/net/bonding/bond0:Slave Interface: eth0
 //	/proc/net/bonding/bond0:MII Status: up
 //	/proc/net/bonding/bond0:Link Failure Count: 0
 //
-// into a per-bond grouped, slave-aligned table. Slaves with a non-zero
-// failure count get a ⚠ marker so they jump out.
-func formatBondReport(raw string) string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" || raw == "(no bonds configured)" {
-		return "```\n(no bonds configured)\n```"
-	}
+// into ordered bond records. Recognised keys: Bonding Mode, Slave Interface,
+// MII Status, Link Failure Count (callers grep for the subset they need). The
+// bond-level "MII Status" line (which precedes the first Slave Interface of each
+// file) is ignored: status/count are only attached to the current slave, and the
+// currentBond guard keeps a trailing slave of bondN-1 from absorbing bondN's
+// bond-level line. This is the single bond parser shared by BondStatus and NICDown.
+func parseBonds(raw string) []*bondInfo {
+	byName := map[string]*bondInfo{}
+	var order []*bondInfo
+	var current *bondSlave
+	var currentBond string
 
-	type slave struct {
-		name      string
-		miiStatus string
-		failures  string
-	}
-	type bond struct {
-		name    string
-		mode    string
-		slaves  []*slave
-		current *slave
-	}
-
-	bondsByName := map[string]*bond{}
-	var order []string
-
-	for _, line := range strings.Split(raw, "\n") {
-		// Each line looks like "/proc/net/bonding/bondN:<key>: <value>"
+	for _, line := range strings.Split(strings.TrimSpace(raw), "\n") {
+		// Each line looks like "/proc/net/bonding/bondN:<key>: <value>".
 		colon := strings.Index(line, ":")
 		if colon < 0 {
 			continue
 		}
-		path := line[:colon]
-		body := strings.TrimSpace(line[colon+1:])
-		name := strings.TrimPrefix(path, "/proc/net/bonding/")
-
-		b, ok := bondsByName[name]
-		if !ok {
-			b = &bond{name: name}
-			bondsByName[name] = b
-			order = append(order, name)
-		}
-
-		key, val, found := strings.Cut(body, ":")
+		name := strings.TrimPrefix(line[:colon], "/proc/net/bonding/")
+		key, val, found := strings.Cut(strings.TrimSpace(line[colon+1:]), ":")
 		if !found {
 			continue
 		}
 		key = strings.TrimSpace(key)
 		val = strings.TrimSpace(val)
 
+		b, ok := byName[name]
+		if !ok {
+			b = &bondInfo{name: name}
+			byName[name] = b
+			order = append(order, b)
+		}
+
 		switch key {
 		case "Bonding Mode":
 			b.mode = val
 		case "Slave Interface":
-			sl := &slave{name: val}
+			sl := &bondSlave{name: val}
 			b.slaves = append(b.slaves, sl)
-			b.current = sl
+			current = sl
+			currentBond = name
 		case "MII Status":
-			if b.current != nil {
-				b.current.miiStatus = val
+			if current != nil && currentBond == name {
+				current.miiStatus = val
 			}
 		case "Link Failure Count":
-			if b.current != nil {
-				b.current.failures = val
+			if current != nil && currentBond == name {
+				current.failures = val
 			}
 		}
+	}
+	return order
+}
+
+// formatBondReport renders parseBonds output as a per-bond grouped, slave-aligned
+// table. Slaves with a non-zero failure count get a ⚠ marker so they jump out.
+func formatBondReport(raw string) string {
+	bonds := parseBonds(raw)
+	if len(bonds) == 0 {
+		return "```\n(no bonds configured)\n```"
 	}
 
 	var sb strings.Builder
 	sb.WriteString("```\n")
-	for _, name := range order {
-		b := bondsByName[name]
+	for _, b := range bonds {
 		sb.WriteString(fmt.Sprintf("● %s", b.name))
 		if b.mode != "" {
 			sb.WriteString(fmt.Sprintf("  (mode: %s)", b.mode))
@@ -414,6 +424,138 @@ func formatBondReport(raw string) string {
 			sb.WriteString(fmt.Sprintf("    %s%-10s  MII=%-5s  Link Failure Count=%s\n",
 				marker, sl.name, sl.miiStatus, sl.failures))
 		}
+	}
+	sb.WriteString("```")
+	return sb.String()
+}
+
+// ethNameRe constrains the interface name we splice into `ip link set <eth> down`.
+// The intent parser already filters to this alphabet; this is a defensive recheck.
+var ethNameRe = regexp.MustCompile(`^[A-Za-z0-9_.:\-]+$`)
+
+// NICDown brings a single bond slave interface down via `ip link set <eth> down`.
+//
+// Safety contract: before downing the port it confirms the interface belongs to
+// a bond AND every slave of that bond is currently MII=up. This guarantees we
+// never take the last live link of a bond offline (which would cut the node off
+// the network). It is a write op, so it requires Args["yes"]=="true"; without it
+// the skill previews the action instead of executing.
+type NICDown struct{}
+
+func (s *NICDown) Name() string { return "nic_down" }
+func (s *NICDown) Description() string {
+	return "将单个 bond 网口 down 掉（ip link set <eth> down）；前置校验 bond 内所有网口均 up，避免双口同时 down 断网"
+}
+
+func (s *NICDown) Execute(sc *Context) (string, error) {
+	// A NIC-down must target exactly one node; batch execution is unsafe here.
+	if strings.TrimSpace(sc.NodeName) == "" {
+		return "🚫 请指定节点名称（down 网口必须明确目标节点，不能批量执行），例如：`nic down cluster-01 bd-node02 eth0 --yes`", nil
+	}
+	nodes, err := resolveNodes(sc.Nodes, sc.NodeName)
+	if err != nil {
+		return err.Error(), nil
+	}
+	if len(nodes) != 1 {
+		names := make([]string, len(nodes))
+		for i, n := range nodes {
+			names[i] = n.Name
+		}
+		return fmt.Sprintf("🚫 节点指向不唯一（匹配到：%s），请精确指定单个节点", strings.Join(names, ", ")), nil
+	}
+	node := nodes[0]
+
+	eth := strings.TrimSpace(sc.Args["eth"])
+	if eth == "" {
+		return fmt.Sprintf("🚫 请指定要 down 的网口名，例如：`nic down %s %s eth0 --yes`", sc.ClusterName, node.Name), nil
+	}
+	if !ethNameRe.MatchString(eth) {
+		return fmt.Sprintf("🚫 网口名含非法字符：%q（只允许字母/数字/._:-）", eth), nil
+	}
+
+	sshNode := config.SSHNode{Name: node.Name, Host: node.Host, User: node.User, KeyFile: node.KeyFile}
+
+	// Step 1 — read bond membership and each slave's MII status.
+	probeCmd := "grep -H -E '^(Slave Interface|MII Status)' /proc/net/bonding/bond* 2>/dev/null || echo '(no bonds configured)'"
+	probeOut, err := sc.RunOnNode(sshNode, probeCmd)
+	if err != nil {
+		return fmt.Sprintf("📌 **%s** 读取 bond 信息失败 ❌\n```\n%v\n```", node.Name, err), nil
+	}
+
+	bondName, slaves, found := findBondForSlave(probeOut, eth)
+	if !found {
+		return fmt.Sprintf("🛑 **%s**：网口 `%s` 不属于任何 bond，拒绝执行（无法确认链路冗余）。\n当前 bond 成员：\n%s",
+			node.Name, eth, formatBondSlaves(probeOut)), nil
+	}
+
+	// Step 2 — every slave of this bond must be up, otherwise downing eth could
+	// take the last live link offline.
+	var notUp []string
+	for _, sl := range slaves {
+		if !strings.EqualFold(sl.miiStatus, "up") {
+			notUp = append(notUp, fmt.Sprintf("%s(MII=%s)", sl.name, sl.miiStatus))
+		}
+	}
+	if len(notUp) > 0 {
+		return fmt.Sprintf("🛑 **%s** · bond `%s` 并非所有网口都是 up，拒绝执行 `ip link set %s down`。\n"+
+			"异常网口：%s\n"+
+			"（只有 bond 内全部网口都 up 时才允许 down 其中一个，避免双口同时 down 导致节点断网）",
+			node.Name, bondName, eth, strings.Join(notUp, ", ")), nil
+	}
+
+	// Step 3 — confirmation gate (write op).
+	var others []string
+	for _, sl := range slaves {
+		if sl.name != eth {
+			others = append(others, sl.name)
+		}
+	}
+	if sc.Args["yes"] != "true" {
+		return fmt.Sprintf("⚠️ 将在 **%s** 执行 `ip link set %s down`（bond `%s`，其余在线网口：%s）。\n"+
+			"这是写操作，确认请重发并加 `--yes`：`nic down %s %s %s --yes`",
+			node.Name, eth, bondName, strings.Join(others, ", "), sc.ClusterName, node.Name, eth), nil
+	}
+
+	// Step 4 — execute. parts[0]="ip" passes the SSH safe-command list.
+	downCmd := fmt.Sprintf("ip link set %s down && ip -br link show %s", eth, eth)
+	out, err := sc.RunOnNode(sshNode, downCmd)
+	if err != nil {
+		return fmt.Sprintf("📌 **%s** 执行 `ip link set %s down` ❌\n```\n%v\n```", node.Name, eth, err), nil
+	}
+	return fmt.Sprintf("✅ **%s** · 已将 `%s` down（bond `%s`，其余在线网口：%s）\n```\n%s\n```\n"+
+		"恢复请在节点执行：`ip link set %s up`",
+		node.Name, eth, bondName, strings.Join(others, ", "), strings.TrimSpace(out), eth), nil
+}
+
+// findBondForSlave returns the bond owning interface eth and that bond's full
+// slave list. found is false if eth is not a member of any bond. Built on the
+// shared parseBonds so BondStatus and NICDown agree on bond membership.
+func findBondForSlave(raw, eth string) (bondName string, slaves []*bondSlave, found bool) {
+	for _, b := range parseBonds(raw) {
+		for _, sl := range b.slaves {
+			if sl.name == eth {
+				return b.name, b.slaves, true
+			}
+		}
+	}
+	return "", nil, false
+}
+
+// formatBondSlaves renders bond → slave(MII) for the diagnostic message shown
+// when a requested interface is not a bond member.
+func formatBondSlaves(raw string) string {
+	bonds := parseBonds(raw)
+	if len(bonds) == 0 {
+		return "```\n(no bonds configured)\n```"
+	}
+	var sb strings.Builder
+	sb.WriteString("```\n")
+	for _, b := range bonds {
+		var members []string
+		for _, sl := range b.slaves {
+			members = append(members, fmt.Sprintf("%s(MII=%s)", sl.name, sl.miiStatus))
+		}
+		sb.WriteString(fmt.Sprintf("● %s: %s\n", b.name, strings.Join(members, ", ")))
 	}
 	sb.WriteString("```")
 	return sb.String()

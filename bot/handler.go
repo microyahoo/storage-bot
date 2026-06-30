@@ -357,7 +357,6 @@ func (h *Handler) helpMessage() string {
 		"**🔍 集群巡检**（Ceph 状态 + 节点硬件，结构化报告）\n" +
 		"- 单集群：`巡检 cluster-01` / `inspect cluster-01` / `体检 cluster-01`\n" +
 		"- 全部集群：`巡检所有集群` / `inspect all clusters`\n" +
-		"- 查群 chat_id（配置定时推送用）：`chatid` / `群id`\n\n" +
 		"**⚙️ Skill 执行**\n" +
 		"- 单集群：`osd cluster-01` / `cluster-02 容量`\n" +
 		"- 批量（仅 set/unset nobackfill/noout）：\n" +
@@ -372,7 +371,10 @@ func (h *Handler) helpMessage() string {
 		"  - 指定条数：`kernel cdn bd-cdn-node02 n=500`\n" +
 		"  - 指定关键字：`kernel cdn bd-cdn-node02 keyword=link`\n" +
 		"- 网卡列表（ip link）：`nic cdn bd-cdn-node02` / `网卡 cdn bd-cdn-node02`\n" +
-		"- Bond 状态（汇总每个 slave 的 Link Failure Count，非零标 ⚠）：`bond cdn bd-cdn-node02`\n\n" +
+		"- Bond 状态（汇总每个 slave 的 Link Failure Count，非零标 ⚠）：`bond cdn bd-cdn-node02`\n" +
+		"- ⬇️ Down 单个网口（删 link，写操作需 `--yes`；前置校验 bond 内两口均 up，避免双口断网）\n" +
+		"  - 预览：`nic down cdn bd-cdn-node02 eth0`（显示将 down 的口，不执行）\n" +
+		"  - 执行：`nic down cdn bd-cdn-node02 eth0 --yes`\n\n" +
 		"**📈 RGW PG 优化**\n" +
 		"- `optimize rgw cluster-01`（默认 max=100）\n" +
 		"- `optimize rgw cluster-01 max=50`\n\n" +
@@ -402,6 +404,7 @@ func (h *Handler) helpMessage() string {
 		"@bot 分析一下cluster-02的日志\n" +
 		"@bot iostat cdn bd-cdn-node02\n" +
 		"@bot kernel cdn bd-cdn-node02 keyword=link\n" +
+		"@bot nic down cdn bd-cdn-node02 eth0 --yes\n" +
 		"@bot set nobackfill all except cdn-test\n" +
 		"@bot optimize rgw cluster-01 max=100\n" +
 		"@bot yrfs01 user liangzheng private\n" +
@@ -468,6 +471,7 @@ func (h *Handler) listSkills() string {
 	sb.WriteString("@bot kernel cdn bd-cdn-node02 keyword=link       # kernel_logs\n")
 	sb.WriteString("@bot nic cdn bd-cdn-node02                       # nic_info\n")
 	sb.WriteString("@bot bond cdn bd-cdn-node02                      # bond_status\n")
+	sb.WriteString("@bot nic down cdn bd-cdn-node02 eth0 --yes       # nic_down\n")
 	sb.WriteString("@bot list nodes cdn                              # list_nodes\n")
 	sb.WriteString("@bot fsid cluster-01                             # get_fsid\n")
 	sb.WriteString("@bot mon ip cluster-01                           # get_mon_ips\n")
@@ -646,6 +650,7 @@ var noAnalysisSkills = map[string]bool{
 	"kernel_logs":       true,
 	"nic_info":          true,
 	"bond_status":       true,
+	"nic_down":          true,
 	"restart_mon":       true,
 	"restart_mgr":       true,
 }

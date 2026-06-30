@@ -68,6 +68,10 @@ type Action struct {
 
 var clusterNameRe = regexp.MustCompile(`(?i)cluster[- _]?(\S+)`)
 
+// ethNameTokenRe matches a bare NIC interface token (eth0, ens1f0, bond0). Used
+// by extractEthName to validate a candidate before treating it as an interface.
+var ethNameTokenRe = regexp.MustCompile(`^[A-Za-z0-9_.:\-]+$`)
+
 func Parse(message string, knownClusters []string) Action {
 	return ParseWithSkills(message, knownClusters, nil)
 }
@@ -135,6 +139,9 @@ func ParseWithAll(message string, knownClusters []string, knownSkills []string, 
 		{"mon_status", []string{"仲裁", "monitor", "mon"}},
 		{"io_stat", []string{"磁盘io", "iostat", "io"}},
 		{"kernel_logs", []string{"kernel_logs", "kernel logs", "kernel日志", "kern日志", "内核日志", "kernel"}},
+		// nic_down before bond_status/nic_info: "nic down"/"网口down"/"ip link set"
+		// all contain the coarser "nic"/"网口"/"ip link" aliases below.
+		{"nic_down", []string{"nic_down", "nic down", "网口down", "网口 down", "down网口", "down 网口", "ip link set", "link down", "网口下线", "禁用网口", "关闭网口"}},
 		{"bond_status", []string{"bond_status", "bond status", "bond", "网卡聚合", "链路聚合", "link failure"}},
 		{"nic_info", []string{"nic_info", "nic info", "nic", "ip link", "网卡", "网卡信息", "网口"}},
 		{"optimize_rgw_pg", []string{"optimize rgw", "rgw pg", "rgw pg优化", "upmap rgw", "优化rgw pg", "优化rgw存储池"}},
@@ -206,6 +213,15 @@ func ParseWithAll(message string, knownClusters []string, knownSkills []string, 
 							action.Args = map[string]string{}
 						}
 						action.Args["keyword"] = kw
+					}
+				}
+				if entry.skill == "nic_down" {
+					action.Args = map[string]string{}
+					if strings.Contains(lower, "--yes") || strings.Contains(lower, "确认") {
+						action.Args["yes"] = "true"
+					}
+					if eth := extractEthName(lower, action.ClusterName, action.NodeName); eth != "" {
+						action.Args["eth"] = eth
 					}
 				}
 				return action
@@ -554,6 +570,45 @@ func extractKeyword(lower string) string {
 		re := regexp.MustCompile(p)
 		if m := re.FindStringSubmatch(lower); len(m) > 1 {
 			return m[1]
+		}
+	}
+	return ""
+}
+
+// extractEthName pulls the NIC interface name (e.g. eth0, ens1f0, enp3s0f1) out
+// of a nic_down message. It skips the cluster name, node name, command keywords,
+// and flags; the interface token is alnum (plus ._:-), contains at least one
+// digit, and is not a hyphenated/underscored hostname. Returns "" if none found.
+func extractEthName(lower, clusterName, nodeName string) string {
+	skip := map[string]bool{
+		"nic": true, "nic_down": true, "down": true, "link": true,
+		"set": true, "ip": true, "--yes": true, "yes": true, "确认": true,
+		"网口": true, "关闭网口": true, "禁用网口": true, "网口下线": true,
+	}
+	cl := strings.ToLower(clusterName)
+	nd := strings.ToLower(nodeName)
+	for _, tok := range strings.Fields(lower) {
+		if skip[tok] || tok == cl || tok == nd {
+			continue
+		}
+		// Hostnames in this fleet are hyphenated/underscored; interface names are not.
+		if strings.ContainsAny(tok, "-_") {
+			continue
+		}
+		if !ethNameTokenRe.MatchString(tok) {
+			continue
+		}
+		// Require at least one digit so plain words ("link", a cluster fragment)
+		// don't get mistaken for an interface; real NICs are eth0/ens1f0/bond0.
+		hasDigit := false
+		for _, r := range tok {
+			if r >= '0' && r <= '9' {
+				hasDigit = true
+				break
+			}
+		}
+		if hasDigit {
+			return tok
 		}
 	}
 	return ""
