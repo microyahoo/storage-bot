@@ -374,7 +374,10 @@ func (h *Handler) helpMessage() string {
 		"- Bond 状态（汇总每个 slave 的 Link Failure Count，非零标 ⚠）：`bond cdn bd-cdn-node02`\n" +
 		"- ⬇️ Down 单个网口（删 link，写操作需 `--yes`；前置校验 bond 内两口均 up，避免双口断网）\n" +
 		"  - 预览：`nic down cdn bd-cdn-node02 eth0`（显示将 down 的口，不执行）\n" +
-		"  - 执行：`nic down cdn bd-cdn-node02 eth0 --yes`\n\n" +
+		"  - 执行：`nic down cdn bd-cdn-node02 eth0 --yes`\n" +
+		"- ⬆️ Up 单个网口（恢复 link，写操作需 `--yes`；前置校验网口属于 bond）\n" +
+		"  - 预览：`nic up cdn bd-cdn-node02 eth0`\n" +
+		"  - 执行：`nic up cdn bd-cdn-node02 eth0 --yes`\n\n" +
 		"**📈 RGW PG 优化**\n" +
 		"- `optimize rgw cluster-01`（默认 max=100）\n" +
 		"- `optimize rgw cluster-01 max=50`\n\n" +
@@ -405,6 +408,7 @@ func (h *Handler) helpMessage() string {
 		"@bot iostat cdn bd-cdn-node02\n" +
 		"@bot kernel cdn bd-cdn-node02 keyword=link\n" +
 		"@bot nic down cdn bd-cdn-node02 eth0 --yes\n" +
+		"@bot nic up cdn bd-cdn-node02 eth0 --yes\n" +
 		"@bot set nobackfill all except cdn-test\n" +
 		"@bot optimize rgw cluster-01 max=100\n" +
 		"@bot yrfs01 user liangzheng private\n" +
@@ -472,6 +476,7 @@ func (h *Handler) listSkills() string {
 	sb.WriteString("@bot nic cdn bd-cdn-node02                       # nic_info\n")
 	sb.WriteString("@bot bond cdn bd-cdn-node02                      # bond_status\n")
 	sb.WriteString("@bot nic down cdn bd-cdn-node02 eth0 --yes       # nic_down\n")
+	sb.WriteString("@bot nic up cdn bd-cdn-node02 eth0 --yes         # nic_up\n")
 	sb.WriteString("@bot list nodes cdn                              # list_nodes\n")
 	sb.WriteString("@bot fsid cluster-01                             # get_fsid\n")
 	sb.WriteString("@bot mon ip cluster-01                           # get_mon_ips\n")
@@ -651,6 +656,7 @@ var noAnalysisSkills = map[string]bool{
 	"nic_info":          true,
 	"bond_status":       true,
 	"nic_down":          true,
+	"nic_up":            true,
 	"restart_mon":       true,
 	"restart_mgr":       true,
 }

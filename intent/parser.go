@@ -142,6 +142,8 @@ func ParseWithAll(message string, knownClusters []string, knownSkills []string, 
 		// nic_down before bond_status/nic_info: "nic down"/"网口down"/"ip link set"
 		// all contain the coarser "nic"/"网口"/"ip link" aliases below.
 		{"nic_down", []string{"nic_down", "nic down", "网口down", "网口 down", "down网口", "down 网口", "ip link set", "link down", "网口下线", "禁用网口", "关闭网口"}},
+		// nic_up after nic_down (symmetric), before nic_info.
+		{"nic_up", []string{"nic_up", "nic up", "网口up", "网口 up", "up网口", "up 网口", "网口上线", "启用网口", "恢复网口"}},
 		{"bond_status", []string{"bond_status", "bond status", "bond", "网卡聚合", "链路聚合", "link failure"}},
 		{"nic_info", []string{"nic_info", "nic info", "nic", "ip link", "网卡", "网卡信息", "网口"}},
 		{"optimize_rgw_pg", []string{"optimize rgw", "rgw pg", "rgw pg优化", "upmap rgw", "优化rgw pg", "优化rgw存储池"}},
@@ -215,7 +217,7 @@ func ParseWithAll(message string, knownClusters []string, knownSkills []string, 
 						action.Args["keyword"] = kw
 					}
 				}
-				if entry.skill == "nic_down" {
+				if entry.skill == "nic_down" || entry.skill == "nic_up" {
 					action.Args = map[string]string{}
 					if strings.Contains(lower, "--yes") || strings.Contains(lower, "确认") {
 						action.Args["yes"] = "true"

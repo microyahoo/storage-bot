@@ -527,6 +527,83 @@ func (s *NICDown) Execute(sc *Context) (string, error) {
 		node.Name, eth, bondName, strings.Join(others, ", "), strings.TrimSpace(out), eth), nil
 }
 
+// NICUp brings a single bond slave interface back up via `ip link set <eth> up`.
+//
+// Safety contract: confirms the interface belongs to a bond before executing.
+// Up is a recovery operation so we do NOT require the other slaves to be in any
+// particular state — we just refuse to act on non-bond ports to avoid
+// accidentally reconfiguring unrelated physical links. Write op: requires
+// Args["yes"]=="true"; without it the skill previews the action.
+type NICUp struct{}
+
+func (s *NICUp) Name() string { return "nic_up" }
+func (s *NICUp) Description() string {
+	return "将单个 bond 网口 up（ip link set <eth> up）；前置校验网口属于某个 bond"
+}
+
+func (s *NICUp) Execute(sc *Context) (string, error) {
+	if strings.TrimSpace(sc.NodeName) == "" {
+		return "🚫 请指定节点名称（up 网口必须明确目标节点），例如：`nic up cluster-01 bd-node02 eth0 --yes`", nil
+	}
+	nodes, err := resolveNodes(sc.Nodes, sc.NodeName)
+	if err != nil {
+		return err.Error(), nil
+	}
+	if len(nodes) != 1 {
+		names := make([]string, len(nodes))
+		for i, n := range nodes {
+			names[i] = n.Name
+		}
+		return fmt.Sprintf("🚫 节点指向不唯一（匹配到：%s），请精确指定单个节点", strings.Join(names, ", ")), nil
+	}
+	node := nodes[0]
+
+	eth := strings.TrimSpace(sc.Args["eth"])
+	if eth == "" {
+		return fmt.Sprintf("🚫 请指定要 up 的网口名，例如：`nic up %s %s eth0 --yes`", sc.ClusterName, node.Name), nil
+	}
+	if !ethNameRe.MatchString(eth) {
+		return fmt.Sprintf("🚫 网口名含非法字符：%q（只允许字母/数字/._:-）", eth), nil
+	}
+
+	sshNode := config.SSHNode{Name: node.Name, Host: node.Host, User: node.User, KeyFile: node.KeyFile}
+
+	// Step 1 — confirm this port is a bond member.
+	probeCmd := "grep -H -E '^(Slave Interface|MII Status)' /proc/net/bonding/bond* 2>/dev/null || echo '(no bonds configured)'"
+	probeOut, err := sc.RunOnNode(sshNode, probeCmd)
+	if err != nil {
+		return fmt.Sprintf("📌 **%s** 读取 bond 信息失败 ❌\n```\n%v\n```", node.Name, err), nil
+	}
+
+	bondName, slaves, found := findBondForSlave(probeOut, eth)
+	if !found {
+		return fmt.Sprintf("🛑 **%s**：网口 `%s` 不属于任何 bond，拒绝执行（避免误操作非 bond 口）。\n当前 bond 成员：\n%s",
+			node.Name, eth, formatBondSlaves(probeOut)), nil
+	}
+
+	// Step 2 — confirmation gate (write op).
+	var others []string
+	for _, sl := range slaves {
+		if sl.name != eth {
+			others = append(others, sl.name)
+		}
+	}
+	if sc.Args["yes"] != "true" {
+		return fmt.Sprintf("⚠️ 将在 **%s** 执行 `ip link set %s up`（bond `%s`，同组网口：%s）。\n"+
+			"这是写操作，确认请重发并加 `--yes`：`nic up %s %s %s --yes`",
+			node.Name, eth, bondName, strings.Join(others, ", "), sc.ClusterName, node.Name, eth), nil
+	}
+
+	// Step 3 — execute. parts[0]="ip" passes the SSH safe-command list.
+	upCmd := fmt.Sprintf("ip link set %s up && ip -br link show %s", eth, eth)
+	out, err := sc.RunOnNode(sshNode, upCmd)
+	if err != nil {
+		return fmt.Sprintf("📌 **%s** 执行 `ip link set %s up` ❌\n```\n%v\n```", node.Name, eth, err), nil
+	}
+	return fmt.Sprintf("✅ **%s** · 已将 `%s` up（bond `%s`，同组网口：%s）\n```\n%s\n```",
+		node.Name, eth, bondName, strings.Join(others, ", "), strings.TrimSpace(out)), nil
+}
+
 // findBondForSlave returns the bond owning interface eth and that bond's full
 // slave list. found is false if eth is not a member of any bond. Built on the
 // shared parseBonds so BondStatus and NICDown agree on bond membership.

@@ -59,6 +59,7 @@ func NewRegistry() *Registry {
 	r.Register(&NICInfo{})
 	r.Register(&BondStatus{})
 	r.Register(&NICDown{})
+	r.Register(&NICUp{})
 	r.Register(&ListNodes{})
 	r.Register(&GetFSID{})
 	r.Register(&GetMonIPs{})

@@ -106,3 +106,15 @@ func TestFormatBondReport(t *testing.T) {
 		t.Errorf("empty case: got %q", got)
 	}
 }
+
+// findBondForSlave is shared by NICDown and NICUp; verify it routes both
+// slaves correctly and returns the full sibling list.
+func TestFindBondForSlaveAllSlaves(t *testing.T) {
+	_, slaves, found := findBondForSlave(bondProbe, "eth0")
+	if !found {
+		t.Fatal("eth0 should be found in bond0")
+	}
+	if len(slaves) != 2 {
+		t.Errorf("want 2 slaves for bond0, got %d", len(slaves))
+	}
+}

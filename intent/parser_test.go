@@ -195,3 +195,42 @@ func TestNICDownDoesNotHijackReadSkills(t *testing.T) {
 		})
 	}
 }
+
+func TestParseNICUp(t *testing.T) {
+	clusters := []string{"cdn", "cluster-01"}
+
+	cases := []struct {
+		msg         string
+		wantCluster string
+		wantNode    string
+		wantEth     string
+		wantYes     bool
+	}{
+		{"nic up cdn bd-cdn-node02 eth0 --yes", "cdn", "bd-cdn-node02", "eth0", true},
+		{"nic up cdn bd-cdn-node02 eth0", "cdn", "bd-cdn-node02", "eth0", false},
+		{"网口up cdn bd-cdn-node02 ens1f0 --yes", "cdn", "bd-cdn-node02", "ens1f0", true},
+		{"网口上线 cluster-01 storage-node01 eth1 确认", "cluster-01", "storage-node01", "eth1", true},
+		{"nic up cdn bd-cdn-node02", "cdn", "bd-cdn-node02", "", false},
+	}
+
+	for _, c := range cases {
+		t.Run(c.msg, func(t *testing.T) {
+			action := ParseWithAll(c.msg, clusters, nil, nil)
+			if action.Type != ActionSkill || action.SkillName != "nic_up" {
+				t.Fatalf("msg=%q: got type=%v skill=%q, want ActionSkill nic_up", c.msg, action.Type, action.SkillName)
+			}
+			if action.ClusterName != c.wantCluster {
+				t.Errorf("msg=%q: cluster=%q, want %q", c.msg, action.ClusterName, c.wantCluster)
+			}
+			if action.NodeName != c.wantNode {
+				t.Errorf("msg=%q: node=%q, want %q", c.msg, action.NodeName, c.wantNode)
+			}
+			if action.Args["eth"] != c.wantEth {
+				t.Errorf("msg=%q: eth=%q, want %q", c.msg, action.Args["eth"], c.wantEth)
+			}
+			if (action.Args["yes"] == "true") != c.wantYes {
+				t.Errorf("msg=%q: yes=%q, want %v", c.msg, action.Args["yes"], c.wantYes)
+			}
+		})
+	}
+}
