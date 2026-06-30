@@ -40,6 +40,10 @@ type Thresholds struct {
 	DiskLifeWarnPct int     `yaml:"disk_life_warn_pct"`
 	DiskLifeCritPct int     `yaml:"disk_life_crit_pct"`
 	LoadWarnRatio   float64 `yaml:"load_warn_ratio"`
+	// PcieMinSpeedGTS: 仅速率降级(宽度未降)时，若协商速率 ≥ 此值(GT/s)则视为
+	// 故意降级(如 PCIe 5.0→4.0)而静默，不告警。0=禁用，全部速率降级都告警。
+	// 宽度降级(掉 lane)永远告警，不受此项影响。
+	PcieMinSpeedGTS float64 `yaml:"pcie_min_speed_gts"`
 }
 
 // WebConfig configures the admin web UI. If Listen is empty, the web server is disabled.

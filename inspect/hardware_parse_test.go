@@ -1,6 +1,7 @@
 package inspect
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -184,7 +185,7 @@ func TestParseAndEvalPCIeLinks(t *testing.T) {
 		t.Errorf("device 0 = %+v, want nvme0/NVMe", devs[0])
 	}
 
-	findings := evalPCIeLinks(devs)
+	findings := evalPCIeLinks(devs, 0)
 	byLevel := map[Level]int{}
 	for _, f := range findings {
 		byLevel[f.Level]++
@@ -206,18 +207,98 @@ func TestEvalPCIeLinksAllOK(t *testing.T) {
 		bdf: "0000:01:00.0", kind: "NVMe", name: "nvme0",
 		capSpeed: 32, capWidth: 4, staSpeed: 32, staWidth: 4,
 	}}
-	f := evalPCIeLinks(devs)
+	f := evalPCIeLinks(devs, 0)
 	if len(f) != 1 || f[0].Level != LevelOK {
 		t.Errorf("all matched → want single OK, got %+v", f)
 	}
 }
 
 func TestEvalPCIeLinksNoDevices(t *testing.T) {
-	f := evalPCIeLinks(nil)
+	f := evalPCIeLinks(nil, 0)
 	if len(f) != 1 || f[0].Level != LevelOK {
 		t.Fatalf("no devices → want single OK, got %+v", f)
 	}
 	if !strings.Contains(f[0].Summary, "未发现") {
 		t.Errorf("no-device summary = %q", f[0].Summary)
+	}
+}
+
+// 22 NVMe drives all downgraded 32→16GT/s x4 must collapse to ONE finding with
+// "×22" in the summary and every device listed in Detail.
+func TestEvalPCIeLinksMergesBySignature(t *testing.T) {
+	var devs []*pcieDev
+	for i := 0; i < 22; i++ {
+		devs = append(devs, &pcieDev{
+			bdf: fmt.Sprintf("0000:%02d:00.0", i+1), kind: "NVMe", name: fmt.Sprintf("nvme%d", i),
+			capSpeed: 32, capWidth: 4, staSpeed: 16, staWidth: 4,
+			capRaw: "Speed 32GT/s, Width x4", staRaw: "Speed 16GT/s, Width x4",
+		})
+	}
+	f := evalPCIeLinks(devs, 0)
+	if len(f) != 1 {
+		t.Fatalf("22 identical downgrades → want 1 merged finding, got %d", len(f))
+	}
+	if f[0].Level != LevelWarn {
+		t.Errorf("speed-only → want Warn, got %v", f[0].Level)
+	}
+	if !strings.Contains(f[0].Summary, "×22") {
+		t.Errorf("summary should show ×22, got %q", f[0].Summary)
+	}
+	if f[0].Metrics["count"] != "22" {
+		t.Errorf("count metric = %q, want 22", f[0].Metrics["count"])
+	}
+	if !strings.Contains(f[0].Detail, "nvme0") || !strings.Contains(f[0].Detail, "nvme21") {
+		t.Errorf("Detail should list all devices, got %q", f[0].Detail)
+	}
+}
+
+// Mixed signatures within a node split into separate findings; different speed
+// transitions don't merge.
+func TestEvalPCIeLinksDistinctSignatures(t *testing.T) {
+	devs := []*pcieDev{
+		{bdf: "0000:01:00.0", kind: "NVMe", name: "nvme0", capSpeed: 32, capWidth: 4, staSpeed: 16, staWidth: 4},
+		{bdf: "0000:02:00.0", kind: "NVMe", name: "nvme1", capSpeed: 32, capWidth: 4, staSpeed: 8, staWidth: 4},  // different speed
+		{bdf: "0000:03:00.0", kind: "NVMe", name: "nvme2", capSpeed: 32, capWidth: 4, staSpeed: 32, staWidth: 1}, // width loss
+	}
+	f := evalPCIeLinks(devs, 0)
+	if len(f) != 3 {
+		t.Fatalf("3 distinct signatures → want 3 findings, got %d", len(f))
+	}
+}
+
+// pcie_min_speed_gts silences intentional speed downgrades (≥ floor) but never
+// width downgrades.
+func TestEvalPCIeLinksSilenceThreshold(t *testing.T) {
+	devs := []*pcieDev{
+		// speed-only 32→16, ≥16 floor → silenced
+		{bdf: "0000:01:00.0", kind: "NVMe", name: "nvme0", capSpeed: 32, capWidth: 4, staSpeed: 16, staWidth: 4},
+		// speed-only 32→8, below 16 floor → still Warn
+		{bdf: "0000:02:00.0", kind: "NVMe", name: "nvme1", capSpeed: 32, capWidth: 4, staSpeed: 8, staWidth: 4},
+		// width loss → Critical regardless of floor
+		{bdf: "0000:03:00.0", kind: "NVMe", name: "nvme2", capSpeed: 16, capWidth: 4, staSpeed: 16, staWidth: 2},
+	}
+	f := evalPCIeLinks(devs, 16)
+	byLevel := map[Level]int{}
+	for _, x := range f {
+		byLevel[x.Level]++
+	}
+	if byLevel[LevelWarn] != 1 {
+		t.Errorf("want 1 Warn (32→8 below floor), got %d", byLevel[LevelWarn])
+	}
+	if byLevel[LevelCritical] != 1 {
+		t.Errorf("want 1 Critical (width loss, floor doesn't apply), got %d", byLevel[LevelCritical])
+	}
+
+	// All silenced → single OK that mentions the intentional downgrade.
+	allSilenced := []*pcieDev{
+		{bdf: "0000:01:00.0", kind: "NVMe", name: "nvme0", capSpeed: 32, capWidth: 4, staSpeed: 16, staWidth: 4},
+		{bdf: "0000:02:00.0", kind: "NVMe", name: "nvme1", capSpeed: 32, capWidth: 4, staSpeed: 16, staWidth: 4},
+	}
+	ok := evalPCIeLinks(allSilenced, 16)
+	if len(ok) != 1 || ok[0].Level != LevelOK {
+		t.Fatalf("all silenced → want single OK, got %+v", ok)
+	}
+	if !strings.Contains(ok[0].Summary, "故意配置") {
+		t.Errorf("silenced OK summary should note intentional downgrade, got %q", ok[0].Summary)
 	}
 }

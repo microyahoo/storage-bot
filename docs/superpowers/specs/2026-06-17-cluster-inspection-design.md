@@ -117,7 +117,7 @@ type InspectContext struct {
 | `hw_disk_usage` | `df -B1 -x tmpfs -x devtmpfs` | 任一挂载点 ≥ `FsCritPct`(默认 90)→ Critical；≥ `FsWarnPct`(默认 85)→ Warn |
 | `hw_nic` | `ip -br link show` | 物理网卡（排除 lo/cali/tun/ipvs 及 bond 的 slave 从属口）状态非 UP/UNKNOWN → Warn |
 | `hw_bond` | `grep ... /proc/net/bonding/bond*` | Link Failure Count > 0 → Warn；MII Status 非 up → Critical |
-| `hw_pcie_link` | NVMe 取 `/sys/class/nvme/*`，网卡取 bond 的 slave 成员口；逐设备 `readlink -f .../device` 解析 BDF，再 `lspci -Dvvv` | 逐 NVMe/物理网卡比对 `LnkCap`(额定) 与 `LnkSta`(协商)：宽度降级(lane 减少)→ Critical；仅速率降级 → Warn。全部匹配产出单条 OK。仅检测 bond 物理成员口，虚拟口(lo/cali*/bond master,无 device 软链)天然排除 |
+| `hw_pcie_link` | NVMe 取 `/sys/class/nvme/*`，网卡取 bond 的 slave 成员口；逐设备 `readlink -f .../device` 解析 BDF，再 `lspci -Dvvv` | 逐 NVMe/物理网卡比对 `LnkCap`(额定) 与 `LnkSta`(协商)：宽度降级(lane 减少)→ Critical；仅速率降级 → Warn。仅检测 bond 物理成员口，虚拟口(lo/cali*/bond master,无 device 软链)天然排除。**降噪**：同节点内降级签名相同(kind+级别+速率/宽度变化)的盘合并为 1 条(`NVMe ×22 …`，盘清单入 Detail)。**故意降级**：`pcie_min_speed_gts`(默认 0=禁用) > 0 时，仅速率降级且协商速率 ≥ 该值视为故意配置(如 PCIe 5.0→4.0)而静默，仅在 OK 汇总附注；宽度降级永不静默 |
 
 **采集前置**：硬件 SMART 检查需节点安装 `smartmontools`。inspector 检测到 `smartctl` 缺失时产出 `LevelUnknown` + Advice「节点未安装 smartmontools」，而不是报错。PCIe 链路检查需 `pciutils`(`lspci`)，缺失时同样产出 `LevelUnknown` + Advice。
 

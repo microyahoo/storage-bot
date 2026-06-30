@@ -382,14 +382,37 @@ func parseLspciLinks(raw string, want map[string]pcieMeta) []*pcieDev {
 	return out
 }
 
-// evalPCIeLinks turns parsed devices into findings. A device whose negotiated
-// LnkSta is below its rated LnkCap is flagged: width loss → Critical (a lane is
-// physically dead, halving throughput), speed-only downgrade → Warn. Devices with
-// no parseable LnkCap/LnkSta are skipped (some bridges expose no link caps). When
-// nothing is degraded, a single OK summary is returned.
-func evalPCIeLinks(devs []*pcieDev) []Finding {
-	var out []Finding
-	checked := 0
+// evalPCIeLinks turns parsed devices into findings, grouping by downgrade
+// signature within the node so 22 identically-downgraded NVMe drives collapse to
+// one finding instead of 22.
+//
+//   - Width loss (a lane is physically dead) → Critical, never silenced.
+//   - Speed-only downgrade → Warn, UNLESS minSpeedGTS > 0 and the negotiated speed
+//     is ≥ minSpeedGTS: then it is treated as an intentional downgrade (e.g.
+//     PCIe 5.0→4.0) and silenced, only noted in the OK summary.
+//
+// Devices with no parseable LnkCap/LnkSta are skipped (some bridges expose no
+// link caps). When nothing is reportable, a single OK summary is returned (with a
+// note if any drives were silenced as intentional).
+func evalPCIeLinks(devs []*pcieDev, minSpeedGTS float64) []Finding {
+	// sig groups devices that share the same downgrade shape, so they merge into
+	// one finding per (kind, severity, speed transition, width transition).
+	type sig struct {
+		kind     string
+		level    Level
+		capSpeed float64
+		staSpeed float64
+		capWidth int
+		staWidth int
+	}
+	type group struct {
+		sig
+		devs []*pcieDev
+	}
+	groups := map[sig]*group{}
+	var order []sig // preserve first-seen order for deterministic output
+
+	checked, silenced := 0, 0
 	for _, d := range devs {
 		if d.capSpeed == 0 || d.capWidth == 0 || d.staSpeed == 0 || d.staWidth == 0 {
 			continue
@@ -400,42 +423,87 @@ func evalPCIeLinks(devs []*pcieDev) []Finding {
 		if !widthDown && !speedDown {
 			continue
 		}
+		// Intentional speed downgrade: speed-only, still at/above the floor.
+		if !widthDown && minSpeedGTS > 0 && d.staSpeed >= minSpeedGTS {
+			silenced++
+			continue
+		}
 
-		id := d.bdf
-		if d.name != "" {
-			id = d.name + " (" + d.bdf + ")"
+		level := LevelWarn
+		if widthDown {
+			level = LevelCritical
 		}
-		f := Finding{
-			Item:   "hw_pcie_link",
-			Detail: fmt.Sprintf("%s %s\nLnkCap: %s\nLnkSta: %s", d.kind, d.model, d.capRaw, d.staRaw),
-			Metrics: map[string]string{
-				"kind": d.kind, "bdf": d.bdf, "name": d.name,
-				"cap": d.capRaw, "sta": d.staRaw,
-			},
+		s := sig{d.kind, level, d.capSpeed, d.staSpeed, d.capWidth, d.staWidth}
+		g, ok := groups[s]
+		if !ok {
+			g = &group{sig: s}
+			groups[s] = g
+			order = append(order, s)
 		}
-		switch {
-		case widthDown:
-			f.Level = LevelCritical
-			f.Summary = fmt.Sprintf("%s %s PCIe 链路降级：宽度 x%d→x%d，速率 %sGT/s→%sGT/s",
-				d.kind, id, d.capWidth, d.staWidth, trimFloat(d.capSpeed), trimFloat(d.staSpeed))
-			f.Advice = "PCIe lane 数下降，检查插槽接触/插拔重插，性能会显著受损"
-		default: // speed-only
-			f.Level = LevelWarn
-			f.Summary = fmt.Sprintf("%s %s PCIe 链路速率降级：%sGT/s→%sGT/s（宽度 x%d 正常）",
-				d.kind, id, trimFloat(d.capSpeed), trimFloat(d.staSpeed), d.staWidth)
-			f.Advice = "PCIe 速率未跑满，检查 BIOS PCIe 配置/信号质量，吞吐会下降"
-		}
-		out = append(out, f)
+		g.devs = append(g.devs, d)
+	}
+
+	var out []Finding
+	for _, s := range order {
+		out = append(out, buildPCIeFinding(groups[s].devs, s.level, s.capSpeed, s.staSpeed, s.capWidth, s.staWidth))
 	}
 
 	if len(out) == 0 {
 		summary := "PCIe 链路速率/宽度正常"
-		if checked == 0 {
+		switch {
+		case checked == 0:
 			summary = "未发现可检测的 NVMe/网卡 PCIe 链路"
+		case silenced > 0:
+			summary = fmt.Sprintf("PCIe 链路正常（%d 块仅速率降级但 ≥%sGT/s，视为故意配置）",
+				silenced, trimFloat(minSpeedGTS))
 		}
 		return []Finding{{Item: "hw_pcie_link", Level: LevelOK, Summary: summary}}
 	}
 	return out
+}
+
+// buildPCIeFinding renders one finding for a group of devices sharing a downgrade
+// signature. A single device keeps the "nvme0 (bdf)" form; multiple collapse to
+// "NVMe ×N", with the full device list in Detail so nothing is lost.
+func buildPCIeFinding(devs []*pcieDev, level Level, capSpeed, staSpeed float64, capWidth, staWidth int) Finding {
+	d0 := devs[0]
+	ids := make([]string, len(devs))
+	for i, d := range devs {
+		ids[i] = d.name
+		if d.name == "" {
+			ids[i] = d.bdf
+		} else {
+			ids[i] = d.name + "(" + d.bdf + ")"
+		}
+	}
+
+	// subject: "nvme0 (0000:01:00.0)" for one, "NVMe ×22" for many.
+	subject := d0.kind + " " + ids[0]
+	if len(devs) > 1 {
+		subject = fmt.Sprintf("%s ×%d", d0.kind, len(devs))
+	}
+
+	f := Finding{
+		Item:  "hw_pcie_link",
+		Level: level,
+		Detail: fmt.Sprintf("%s %s\nLnkCap: %s\nLnkSta: %s\n受影响设备(%d)：%s",
+			d0.kind, d0.model, d0.capRaw, d0.staRaw, len(devs), strings.Join(ids, ", ")),
+		Metrics: map[string]string{
+			"kind": d0.kind, "count": strconv.Itoa(len(devs)),
+			"names": strings.Join(ids, ", "),
+			"cap":   d0.capRaw, "sta": d0.staRaw,
+		},
+	}
+	if level == LevelCritical { // width downgrade
+		f.Summary = fmt.Sprintf("%s PCIe 链路降级：宽度 x%d→x%d，速率 %sGT/s→%sGT/s",
+			subject, capWidth, staWidth, trimFloat(capSpeed), trimFloat(staSpeed))
+		f.Advice = "PCIe lane 数下降，检查插槽接触/插拔重插，性能会显著受损"
+	} else { // speed-only
+		f.Summary = fmt.Sprintf("%s PCIe 链路速率降级：%sGT/s→%sGT/s（宽度 x%d 正常）",
+			subject, trimFloat(capSpeed), trimFloat(staSpeed), staWidth)
+		f.Advice = "PCIe 速率未跑满，检查 BIOS PCIe 配置/信号质量，吞吐会下降"
+	}
+	return f
 }
 
 // trimFloat renders a PCIe speed without trailing ".0" (32.0→"32", 2.5→"2.5").

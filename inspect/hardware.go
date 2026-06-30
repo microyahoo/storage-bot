@@ -173,7 +173,7 @@ func (hwPCIeLink) Inspect(ic *InspectContext) ([]Finding, error) {
 
 	devs := parseLspciLinks(raw, want)
 	sortPCIeDevs(devs)
-	out := evalPCIeLinks(devs)
+	out := evalPCIeLinks(devs, ic.Thresholds.PcieMinSpeedGTS)
 	for i := range out {
 		out[i].Node = ic.Node.Name
 	}
