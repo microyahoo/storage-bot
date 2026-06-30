@@ -2,6 +2,7 @@ package inspect
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -53,6 +54,39 @@ func (r *Report) Abnormal() []Finding {
 	return append(out, unknown...)
 }
 
+// nodeGroup is a set of abnormal findings sharing one node (or the cluster-level
+// group when Node is empty).
+type nodeGroup struct {
+	node     string // "" for cluster-scope findings
+	nodeIP   string
+	findings []Finding
+}
+
+// AbnormalByNode groups Abnormal() findings by node so the renderer can separate
+// each node with a divider. The cluster-scope group (Node == "") sorts first;
+// node groups follow in name order. Within a group, findings keep Abnormal()'s
+// severity order (Critical → Warn → Unknown).
+func (r *Report) AbnormalByNode() []nodeGroup {
+	idx := map[string]int{}
+	var groups []nodeGroup
+	for _, f := range r.Abnormal() {
+		i, ok := idx[f.Node]
+		if !ok {
+			i = len(groups)
+			idx[f.Node] = i
+			groups = append(groups, nodeGroup{node: f.Node, nodeIP: f.NodeIP})
+		}
+		groups[i].findings = append(groups[i].findings, f)
+	}
+	sort.SliceStable(groups, func(i, j int) bool {
+		if (groups[i].node == "") != (groups[j].node == "") {
+			return groups[i].node == "" // cluster-scope first
+		}
+		return groups[i].node < groups[j].node
+	})
+	return groups
+}
+
 func itemLabel(f Finding) string {
 	if f.Node != "" {
 		label := f.Item + " · " + f.Node
@@ -73,14 +107,29 @@ func (r *Report) RenderText() string {
 	}
 	fmt.Fprintf(&b, "**集群巡检 · %s**\n总体：%s · %s · %s\n\n",
 		r.Cluster, r.Overall.String(), stat, r.StartedAt.Format("2006-01-02 15:04"))
-	ab := r.Abnormal()
-	if len(ab) == 0 {
+	groups := r.AbnormalByNode()
+	if len(groups) == 0 {
 		b.WriteString("✅ 全部正常\n")
 	} else {
-		for _, f := range ab {
-			fmt.Fprintf(&b, "%s `%s` — %s\n", f.Level.Emoji(), itemLabel(f), f.Summary)
-			if f.Advice != "" {
-				fmt.Fprintf(&b, "    建议：%s\n", f.Advice)
+		// One block per node, separated by a divider so dense multi-node output
+		// doesn't blur together. The node name heads each block; findings below
+		// it drop the redundant node suffix.
+		for gi, g := range groups {
+			if gi > 0 {
+				b.WriteString("\n---\n")
+			}
+			if g.node == "" {
+				b.WriteString("📦 **集群级**\n")
+			} else if g.nodeIP != "" {
+				fmt.Fprintf(&b, "🖥 **%s**（%s）\n", g.node, g.nodeIP)
+			} else {
+				fmt.Fprintf(&b, "🖥 **%s**\n", g.node)
+			}
+			for _, f := range g.findings {
+				fmt.Fprintf(&b, "%s `%s` — %s\n", f.Level.Emoji(), f.Item, f.Summary)
+				if f.Advice != "" {
+					fmt.Fprintf(&b, "    建议：%s\n", f.Advice)
+				}
 			}
 		}
 		if ok > 0 {

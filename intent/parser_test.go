@@ -234,3 +234,27 @@ func TestParseNICUp(t *testing.T) {
 		})
 	}
 }
+
+// "巡检项" / "list inspect" must route to ActionListInspect, NOT trigger an
+// inspection run — even though they contain the "巡检"/"inspect" run triggers.
+func TestParseListInspect(t *testing.T) {
+	clusters := []string{"cluster-01"}
+	listCases := []string{"巡检项", "list inspect", "有哪些巡检项", "inspect list", "list inspect items"}
+	for _, msg := range listCases {
+		t.Run(msg, func(t *testing.T) {
+			if action := ParseWithAll(msg, clusters, nil, nil); action.Type != ActionListInspect {
+				t.Errorf("msg=%q: type=%v, want ActionListInspect", msg, action.Type)
+			}
+		})
+	}
+
+	// Plain inspect commands still run a scan, not the list.
+	runCases := []string{"巡检 cluster-01", "inspect cluster-01", "体检 cluster-01"}
+	for _, msg := range runCases {
+		t.Run(msg, func(t *testing.T) {
+			if action := ParseWithAll(msg, clusters, nil, nil); action.Type != ActionInspect {
+				t.Errorf("msg=%q: type=%v, want ActionInspect", msg, action.Type)
+			}
+		})
+	}
+}

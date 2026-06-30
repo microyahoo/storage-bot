@@ -191,6 +191,8 @@ func (h *Handler) HandleMessage(ctx context.Context, event *larkim.P2MessageRece
 		reply = h.listClusters()
 	case intent.ActionListSkills:
 		reply = h.listSkills()
+	case intent.ActionListInspect:
+		reply = h.listInspectItems()
 	case intent.ActionToggleLLM:
 		reply = h.toggleLLM(action.ToggleLLMEnable)
 	case intent.ActionSkill:
@@ -357,6 +359,7 @@ func (h *Handler) helpMessage() string {
 		"**🔍 集群巡检**（Ceph 状态 + 节点硬件，结构化报告）\n" +
 		"- 单集群：`巡检 cluster-01` / `inspect cluster-01` / `体检 cluster-01`\n" +
 		"- 全部集群：`巡检所有集群` / `inspect all clusters`\n" +
+		"- 查看巡检项：`巡检项` / `list inspect`\n" +
 		"**⚙️ Skill 执行**\n" +
 		"- 单集群：`osd cluster-01` / `cluster-02 容量`\n" +
 		"- 批量（仅 set/unset nobackfill/noout）：\n" +
@@ -486,6 +489,44 @@ func (h *Handler) listSkills() string {
 	sb.WriteString("@bot unset noout cluster-01                      # unset_noout\n")
 	sb.WriteString("@bot optimize rgw cluster-01 max=100             # optimize_rgw_pg\n")
 	sb.WriteString("```")
+	return sb.String()
+}
+
+// listInspectItems renders the registered inspection items, grouped by scope, so
+// users can see exactly what `巡检`/`inspect` covers. Driven by the runner's
+// registry, so a newly registered inspector shows up here automatically.
+func (h *Handler) listInspectItems() string {
+	if h.inspectRunner == nil {
+		return "巡检功能未启用（设置 config inspect.enabled: true）"
+	}
+	items := h.inspectRunner.Items()
+	if len(items) == 0 {
+		return "🚫 当前没有注册任何巡检项"
+	}
+
+	var cluster, node []inspect.InspectItem
+	for _, it := range items {
+		if it.Scope == inspect.ClusterScope {
+			cluster = append(cluster, it)
+		} else {
+			node = append(node, it)
+		}
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("🔍 巡检共 **%d** 项（`巡检 cluster-01` 执行）\n", len(items)))
+	if len(cluster) > 0 {
+		sb.WriteString("\n**🛰 集群级**（每集群一次，走 ceph 命令）\n")
+		for _, it := range cluster {
+			sb.WriteString(fmt.Sprintf("　🔹 `%s` — %s\n", it.Name, it.Description))
+		}
+	}
+	if len(node) > 0 {
+		sb.WriteString("\n**🖥 节点级**（每节点一次，走 SSH）\n")
+		for _, it := range node {
+			sb.WriteString(fmt.Sprintf("　🔸 `%s` — %s\n", it.Name, it.Description))
+		}
+	}
 	return sb.String()
 }
 
@@ -742,14 +783,16 @@ func (h *Handler) handleInspect(ctx context.Context, action intent.Action) (stri
 		return "没有可巡检的集群", nil
 	}
 	var b strings.Builder
-	for _, name := range targets {
+	for i, name := range targets {
+		if i > 0 {
+			b.WriteString("\n\n═══════════════\n\n")
+		}
 		rep, err := h.inspectRunner.Run(ctx, name)
 		if err != nil {
-			fmt.Fprintf(&b, "❌ %s 巡检失败：%v\n\n", name, err)
+			fmt.Fprintf(&b, "❌ %s 巡检失败：%v\n", name, err)
 			continue
 		}
 		b.WriteString(rep.RenderText())
-		b.WriteString("\n")
 	}
 	return b.String(), nil
 }
@@ -819,6 +862,8 @@ func cardForAction(action intent.Action, body string, err error) *card.Card {
 		return card.New("🗂", "集群与存储列表", card.ThemeBlue).Body(body)
 	case intent.ActionListSkills:
 		return card.New("🧰", "可用 Skills", card.ThemeBlue).Body(body)
+	case intent.ActionListInspect:
+		return card.New("🔍", "巡检项清单", card.ThemeBlue).Body(body)
 	case intent.ActionToggleLLM:
 		theme := card.ThemeGreen
 		emoji := "🟢"

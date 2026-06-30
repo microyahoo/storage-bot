@@ -52,6 +52,65 @@ func TestRenderText(t *testing.T) {
 	}
 }
 
+// Abnormal findings must group by node, cluster-scope first, with a divider
+// between groups so dense multi-node output is separable.
+func TestRenderTextGroupsByNode(t *testing.T) {
+	r := &Report{
+		Cluster:   "c1",
+		StartedAt: time.Date(2026, 6, 30, 3, 0, 0, 0, time.UTC),
+		Findings: []Finding{
+			{Item: "ceph_osd", Level: LevelCritical, Summary: "OSD down"},
+			{Item: "hw_pcie_link", Node: "node-b", NodeIP: "10.0.0.2", Level: LevelWarn, Summary: "PCIe 降速"},
+			{Item: "hw_disk_smart", Node: "node-a", NodeIP: "10.0.0.1", Level: LevelWarn, Summary: "寿命 85%"},
+			{Item: "hw_bond", Node: "node-a", NodeIP: "10.0.0.1", Level: LevelCritical, Summary: "MII down"},
+		},
+	}
+	r.Finalize()
+	txt := r.RenderText()
+
+	// Divider present (multiple groups).
+	if !strings.Contains(txt, "---") {
+		t.Errorf("expected divider between node groups:\n%s", txt)
+	}
+	// Node header with IP.
+	if !strings.Contains(txt, "node-a") || !strings.Contains(txt, "10.0.0.1") {
+		t.Errorf("expected node-a header with IP:\n%s", txt)
+	}
+	// Cluster-scope group label appears and precedes node groups.
+	ci := strings.Index(txt, "集群级")
+	ai := strings.Index(txt, "node-a")
+	if ci < 0 || ai < 0 || ci > ai {
+		t.Errorf("cluster-scope group should come before node groups:\n%s", txt)
+	}
+	// node-a's two findings sit under one header (only one "node-a" occurrence).
+	if n := strings.Count(txt, "node-a"); n != 1 {
+		t.Errorf("node-a should head one group, appeared %d times:\n%s", n, txt)
+	}
+}
+
+func TestAbnormalByNode(t *testing.T) {
+	r := &Report{Findings: []Finding{
+		{Item: "ceph_osd", Level: LevelCritical, Summary: "x"},
+		{Item: "hw_a", Node: "n2", Level: LevelWarn, Summary: "x"},
+		{Item: "hw_b", Node: "n1", Level: LevelWarn, Summary: "x"},
+		{Item: "hw_c", Node: "n1", Level: LevelCritical, Summary: "x"},
+	}}
+	groups := r.AbnormalByNode()
+	if len(groups) != 3 {
+		t.Fatalf("want 3 groups (cluster, n1, n2), got %d", len(groups))
+	}
+	if groups[0].node != "" {
+		t.Errorf("group[0] should be cluster-scope, got %q", groups[0].node)
+	}
+	if groups[1].node != "n1" || groups[2].node != "n2" {
+		t.Errorf("node groups should sort by name: %q, %q", groups[1].node, groups[2].node)
+	}
+	// Within n1, Critical sorts before Warn (Abnormal order preserved).
+	if groups[1].findings[0].Level != LevelCritical {
+		t.Errorf("n1 first finding should be Critical, got %v", groups[1].findings[0].Level)
+	}
+}
+
 func TestRenderCard(t *testing.T) {
 	r := sampleReport()
 	r.Finalize()

@@ -231,10 +231,13 @@ type Report struct {
 }
 
 func (r *Report) Counts() (ok, warn, crit int)
-func (r *Report) Abnormal() []Finding   // Warn 及以上，表格用
+func (r *Report) Abnormal() []Finding       // Warn 及以上，表格用
+func (r *Report) AbnormalByNode() []nodeGroup // Abnormal 按节点分组（集群级在前），RenderText 用
 func (r *Report) RenderText() string    // API/降级用的 Markdown 文本
 func (r *Report) RenderCard() *larkCard // 飞书卡片（chat 触发与 cron 推送共用）
 ```
+
+`RenderText` 按节点分组输出：集群级项（无 Node）单列在前，之后每个节点一块、组内按严重级排（Critical → Warn → Unknown），**节点块之间用 `---` 分割线隔开**，避免多节点输出混成一片。多集群一次巡检时，集群之间用更粗的分隔（`═══`）。`巡检项`/`list inspect`（`ActionListInspect`）按 scope 列出所有已注册巡检项，由 `Runner.Items()` 驱动，新增 inspector 自动出现，无需手工维护。
 
 ### 8.2 飞书卡片布局（已评审确认）
 

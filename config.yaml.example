@@ -123,3 +123,4 @@ inspect:
       disk_life_warn_pct: 80
       disk_life_crit_pct: 90
       load_warn_ratio: 2.0
+      pcie_min_speed_gts: 16

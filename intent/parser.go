@@ -25,6 +25,7 @@ const (
 	ActionRESTStorage // query a non-Ceph REST storage system
 	ActionToggleLLM   // enable/disable LLM at runtime
 	ActionInspect     // run cluster inspection
+	ActionListInspect // list available inspection items
 )
 
 func (t ActionType) String() string {
@@ -49,6 +50,8 @@ func (t ActionType) String() string {
 		return "toggle llm"
 	case ActionInspect:
 		return "inspect"
+	case ActionListInspect:
+		return "list inspect"
 	default:
 		return "unknown"
 	}
@@ -91,6 +94,16 @@ func ParseWithAll(message string, knownClusters []string, knownSkills []string, 
 		action.ToggleLLMEnable = strings.Contains(lower, "enable") ||
 			strings.Contains(lower, "开启") || strings.Contains(lower, "打开") ||
 			strings.Contains(lower, "启用") || strings.Contains(lower, "on")
+		return action
+	}
+
+	// List inspection items — checked BEFORE the inspect run trigger, since
+	// "巡检项" ⊃ "巡检" and "list inspect" ⊃ "inspect". A bare "list/列表/有哪些"
+	// next to an inspect keyword means "show me the items", not "run a scan".
+	if (strings.Contains(lower, "巡检项") || strings.Contains(lower, "体检项")) ||
+		((strings.Contains(lower, "list") || strings.Contains(lower, "列表") || strings.Contains(lower, "有哪些") || strings.Contains(lower, "哪些")) &&
+			strings.Contains(lower, "inspect")) {
+		action.Type = ActionListInspect
 		return action
 	}
 
@@ -352,7 +365,8 @@ Rules:
 
 func NeedsFallback(action Action) bool {
 	if action.Type == ActionHelp || action.Type == ActionListClusters ||
-		action.Type == ActionListSkills || action.Type == ActionToggleLLM {
+		action.Type == ActionListSkills || action.Type == ActionListInspect ||
+		action.Type == ActionToggleLLM {
 		return false
 	}
 	return action.ClusterName == ""

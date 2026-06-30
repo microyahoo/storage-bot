@@ -36,6 +36,25 @@ func NewRunner(reg *Registry, clusters ClusterProvider, ssh *executor.SSHExecuto
 	}
 }
 
+// InspectItem is a one-line description of a registered inspector, for help/list
+// surfaces. ClusterScope items run once per cluster; NodeScope items run per node.
+type InspectItem struct {
+	Name        string
+	Description string
+	Scope       Scope
+}
+
+// Items returns all registered inspectors as InspectItem, cluster-scope first.
+func (r *Runner) Items() []InspectItem {
+	var out []InspectItem
+	for _, s := range []Scope{ClusterScope, NodeScope} {
+		for _, in := range r.registry.ByScope(s) {
+			out = append(out, InspectItem{Name: in.Name(), Description: in.Description(), Scope: s})
+		}
+	}
+	return out
+}
+
 // Run resolves the cluster, runs all inspectors, persists and returns the report.
 func (r *Runner) Run(ctx context.Context, clusterInput string) (*Report, error) {
 	name, cfg, err := r.clusters.FindByPrefix(clusterInput)
