@@ -67,13 +67,6 @@ function esc(s) {
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 }
 
-function nodeLabel(f) {
-  if (!f.node) return '';
-  let s = f.node;
-  if (f.node_ip) s += '(' + f.node_ip + ')';
-  return s;
-}
-
 function setBusy(busy) {
   const b = document.getElementById('run-btn');
   if (!b) return;
@@ -94,32 +87,56 @@ function renderReport(rep) {
     .filter(f => f.level !== 0)
     .sort((a, b) => order.indexOf(a.level) - order.indexOf(b.level));
 
+  // 按节点分组（与聊天端 RenderText 对齐）：集群级（无 node）在前，
+  // 节点按名排序；组内保留上面的严重级顺序。
+  const groupMap = new Map(); // node -> {node, nodeIP, findings:[]}
+  abnormal.forEach(f => {
+    const key = f.node || '';
+    if (!groupMap.has(key)) groupMap.set(key, {node: key, nodeIP: f.node_ip || '', findings: []});
+    groupMap.get(key).findings.push(f);
+  });
+  const groups = [...groupMap.values()].sort((a, b) => {
+    if ((a.node === '') !== (b.node === '')) return a.node === '' ? -1 : 1; // 集群级在前
+    return a.node.localeCompare(b.node);
+  });
+
   const o = lv(rep.overall);
   let stat = `🔴 严重 ${counts[2]} · 🟡 警告 ${counts[1]} · 🟢 正常 ${counts[0]}`;
   if (counts[3]) stat += ` · ⚪ 未知 ${counts[3]}`;
+
+  function groupHeader(g) {
+    const label = g.node === ''
+      ? '📦 集群级'
+      : '🖥 ' + esc(g.node) + (g.nodeIP ? '（' + esc(g.nodeIP) + '）' : '');
+    return `<div class="px-5 py-2 bg-white/[0.02] border-b border-line text-[12px] font-semibold text-slate-200">${label}</div>`;
+  }
+
+  function findingRows(g) {
+    return g.findings.map(f => {
+      const l = lv(f.level);
+      const advice = f.advice ? `<div class="text-mute text-[12px] mt-1">建议：${esc(f.advice)}</div>` : '';
+      return `<tr class="hover:bg-white/[0.03] transition">
+        <td class="px-5 py-3 whitespace-nowrap align-top"><span class="inline-block px-2 py-[2px] rounded-full text-[11px] font-semibold ${l.cls}">${l.emoji} ${l.name}</span></td>
+        <td class="px-5 py-3 align-top"><code>${esc(f.item)}</code></td>
+        <td class="px-5 py-3 text-slate-100">${esc(f.summary)}${advice}</td>
+      </tr>`;
+    }).join('');
+  }
 
   let rows = '';
   if (abnormal.length === 0) {
     rows = `<div class="px-5 py-8 text-center text-emerald-400 text-sm">✅ 全部正常</div>`;
   } else {
-    rows = `<div class="overflow-x-auto"><table class="w-full text-[13px]">
-      <thead><tr class="text-mute text-[11px] uppercase tracking-wider">
-        <th class="text-left px-5 py-3 font-medium">级别</th>
-        <th class="text-left px-5 py-3 font-medium">巡检项</th>
-        <th class="text-left px-5 py-3 font-medium">结论</th>
-      </tr></thead><tbody class="divide-y divide-line">`;
-    abnormal.forEach(f => {
-      const l = lv(f.level);
-      const nl = nodeLabel(f);
-      const item = esc(f.item) + (nl ? ` · ${esc(nl)}` : '');
-      const advice = f.advice ? `<div class="text-mute text-[12px] mt-1">建议：${esc(f.advice)}</div>` : '';
-      rows += `<tr class="hover:bg-white/[0.03] transition">
-        <td class="px-5 py-3 whitespace-nowrap"><span class="inline-block px-2 py-[2px] rounded-full text-[11px] font-semibold ${l.cls}">${l.emoji} ${l.name}</span></td>
-        <td class="px-5 py-3"><code>${item}</code></td>
-        <td class="px-5 py-3 text-slate-100">${esc(f.summary)}${advice}</td>
-      </tr>`;
-    });
-    rows += `</tbody></table></div>`;
+    // 每个节点一块：节点小标题 + 该组的三列表格，块间分隔，避免多节点混成一片。
+    rows = groups.map(g => `
+      ${groupHeader(g)}
+      <div class="overflow-x-auto"><table class="w-full text-[13px]">
+        <thead><tr class="text-mute text-[11px] uppercase tracking-wider">
+          <th class="text-left px-5 py-2 font-medium">级别</th>
+          <th class="text-left px-5 py-2 font-medium">巡检项</th>
+          <th class="text-left px-5 py-2 font-medium">结论</th>
+        </tr></thead><tbody class="divide-y divide-line">${findingRows(g)}</tbody>
+      </table></div>`).join('');
     if (counts[0] > 0) {
       rows += `<div class="px-5 py-3 border-t border-line text-mute text-[12px]">🟢 其余 ${counts[0]} 项正常</div>`;
     }
