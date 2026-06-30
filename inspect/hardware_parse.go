@@ -2,6 +2,7 @@ package inspect
 
 import (
 	"fmt"
+	"path"
 	"regexp"
 	"sort"
 	"strconv"
@@ -232,48 +233,56 @@ func parseBond(raw string) Finding {
 	return f
 }
 
-// pcieDev is one PCIe endpoint (NVMe controller or NIC) with its rated link
-// capability (LnkCap) and currently negotiated link state (LnkSta).
-type pcieDev struct {
-	bdf      string // PCI domain:bus:device.function, e.g. 0000:01:00.0
-	kind     string // "NVMe" | "NIC"
-	name     string // kernel name, e.g. nvme0 / eth0
-	model    string // lspci device description
-	capSpeed float64
-	capWidth int
-	staSpeed float64
-	staWidth int
-	capRaw   string // "Speed 32GT/s, Width x4"
-	staRaw   string
+// pcieMeta identifies a device we want to check, keyed by BDF. kind/name come
+// authoritatively from sysfs (bonding files + the device symlink), so the lspci
+// pass only needs to fill in link speed/width — it no longer sniffs the device
+// class from the description text.
+type pcieMeta struct {
+	kind string // "NVMe" | "NIC"
+	name string // kernel name, e.g. nvme0 / eth0
 }
 
 var (
-	bdfRe       = regexp.MustCompile(`[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-9a-f]`)
+	bdfRe       = regexp.MustCompile(`^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-9a-f]$`)
 	pcieSpeedRe = regexp.MustCompile(`Speed ([0-9.]+)GT/s`)
 	pcieWidthRe = regexp.MustCompile(`Width x([0-9]+)`)
 )
 
-// parseSysClassLinks maps PCI BDF → kernel device name from `ls -l /sys/class/<kind>/`
-// output. Each symlink target embeds the device's PCI path; the LAST BDF in the
-// path is the device's own function (mirrors the reference script's `tail -1`).
-// Virtual devices (lo, bond*, cali*) have no BDF in their target and are skipped.
-func parseSysClassLinks(raw string) map[string]string {
-	out := map[string]string{}
+// parseBondSlaveNames returns the physical NIC names enslaved to a bond, read
+// from the "Slave Interface:" lines of `grep ... /proc/net/bonding/bond*`. These
+// are the only NICs worth a PCIe check — virtual interfaces (lo, cali*, tun*) and
+// the bond masters themselves are never bond slaves, so they are excluded by
+// construction rather than by a denylist.
+func parseBondSlaveNames(raw string) []string {
+	var out []string
 	for _, line := range strings.Split(raw, "\n") {
-		name, target, ok := strings.Cut(line, " -> ")
+		// Line shape: "/proc/net/bonding/bond0:Slave Interface: eth0".
+		_, body, ok := strings.Cut(line, ":")
 		if !ok {
 			continue
 		}
-		fields := strings.Fields(name)
-		if len(fields) == 0 {
+		key, val, ok := strings.Cut(strings.TrimSpace(body), ":")
+		if !ok || strings.TrimSpace(key) != "Slave Interface" {
 			continue
 		}
-		dev := fields[len(fields)-1]
-		if bdfs := bdfRe.FindAllString(target, -1); len(bdfs) > 0 {
-			out[bdfs[len(bdfs)-1]] = dev
+		if name := strings.TrimSpace(val); name != "" {
+			out = append(out, name)
 		}
 	}
 	return out
+}
+
+// bdfFromReadlink extracts the PCI BDF from `readlink -f /sys/class/<k>/<dev>/device`
+// output. The resolved target's basename IS the device's BDF (e.g.
+// /sys/devices/pci0000:00/0000:00:1d.0/0000:01:00.0 → 0000:01:00.0), so no
+// path-pattern guessing is needed. Returns "" if the device has no PCI parent
+// (virtual devices, or a missing symlink yields empty/non-BDF output).
+func bdfFromReadlink(raw string) string {
+	base := path.Base(strings.TrimSpace(raw))
+	if bdfRe.MatchString(base) {
+		return base
+	}
+	return ""
 }
 
 func parsePCIeSpeed(s string) float64 {
@@ -297,9 +306,26 @@ func pcieLinkSummary(s string) string {
 	return strings.TrimSpace(pcieSpeedRe.FindString(s) + ", " + pcieWidthRe.FindString(s))
 }
 
+// pcieDev is one PCIe endpoint (NVMe controller or NIC) with its rated link
+// capability (LnkCap) and currently negotiated link state (LnkSta).
+type pcieDev struct {
+	bdf      string // PCI domain:bus:device.function, e.g. 0000:01:00.0
+	kind     string // "NVMe" | "NIC", from sysfs (the want set)
+	name     string // kernel name, e.g. nvme0 / eth0
+	model    string // lspci device description
+	capSpeed float64
+	capWidth int
+	staSpeed float64
+	staWidth int
+	capRaw   string // "Speed 32GT/s, Width x4"
+	staRaw   string
+}
+
 // parseLspciLinks parses `lspci -Dvvv` output into pcieDev records, keeping only
-// NVMe controllers and NICs. names maps BDF → kernel device name (from sysfs); a
-// device absent from names keeps an empty name and is identified by BDF + model.
+// the devices in want (BDF → kind/name, resolved from sysfs). kind/name come from
+// want — authoritative — while the model description and link speed/width are read
+// from the lspci block. Devices not in want (bridges, GPUs, non-bond NICs) are
+// skipped.
 //
 // Block shape (header at column 0, capabilities indented):
 //
@@ -309,35 +335,32 @@ func pcieLinkSummary(s string) string {
 //
 // Only "LnkCap:"/"LnkSta:" (not the LnkCap2/LnkSta2 variants) carry the rated and
 // negotiated speed/width we compare.
-func parseLspciLinks(raw string, names map[string]string) []*pcieDev {
+func parseLspciLinks(raw string, want map[string]pcieMeta) []*pcieDev {
 	byBDF := map[string]*pcieDev{}
 	var order []string
 	var cur *pcieDev
 
 	for _, line := range strings.Split(raw, "\n") {
-		// A header line starts at column 0 with a BDF; capability lines are indented.
+		// A header line starts at column 0 with a BDF as its first field;
+		// capability lines are indented.
 		if line != "" && line[0] != ' ' && line[0] != '\t' {
 			cur = nil
-			m := bdfRe.FindString(line)
-			if m == "" {
+			fields := strings.Fields(line)
+			if len(fields) == 0 || !bdfRe.MatchString(fields[0]) {
 				continue
 			}
-			kind := ""
-			switch {
-			case strings.Contains(line, "Non-Volatile memory controller"):
-				kind = "NVMe"
-			case strings.Contains(line, "Ethernet controller"), strings.Contains(line, "Network controller"):
-				kind = "NIC"
-			default:
+			bdf := fields[0]
+			meta, ok := want[bdf]
+			if !ok {
 				continue // not a device we track
 			}
 			model := ""
 			if _, desc, ok := strings.Cut(line, ": "); ok {
 				model = strings.TrimSpace(desc)
 			}
-			cur = &pcieDev{bdf: m, kind: kind, name: names[m], model: model}
-			byBDF[m] = cur
-			order = append(order, m)
+			cur = &pcieDev{bdf: bdf, kind: meta.kind, name: meta.name, model: model}
+			byBDF[bdf] = cur
+			order = append(order, bdf)
 			continue
 		}
 		if cur == nil {

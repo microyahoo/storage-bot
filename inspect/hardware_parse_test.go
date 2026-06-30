@@ -117,35 +117,47 @@ func TestParseBond(t *testing.T) {
 	}
 }
 
-func TestParseSysClassLinks(t *testing.T) {
-	// `ls -l /sys/class/nvme/` and `/sys/class/net/` style output. Virtual
-	// interfaces (lo, bond0) have no PCI BDF in their target and are skipped.
-	raw := "total 0\n" +
-		"lrwxrwxrwx 1 root root 0 Jun 30 10:00 nvme0 -> ../../devices/pci0000:00/0000:00:1d.0/0000:01:00.0/nvme/nvme0\n" +
-		"lrwxrwxrwx 1 root root 0 Jun 30 10:00 nvme1 -> ../../devices/pci0000:00/0000:00:1d.4/0000:02:00.0/nvme/nvme1\n"
-	m := parseSysClassLinks(raw)
-	if m["0000:01:00.0"] != "nvme0" {
-		t.Errorf("nvme0 BDF mapping wrong: %v", m)
+func TestParseBondSlaveNames(t *testing.T) {
+	// `grep -H '^Slave Interface' /proc/net/bonding/bond*` shape. Only physical
+	// bond members are returned; virtual interfaces never appear here.
+	raw := "/proc/net/bonding/bond0:Slave Interface: eth0\n" +
+		"/proc/net/bonding/bond0:Slave Interface: eth1\n" +
+		"/proc/net/bonding/bond1:Slave Interface: ens1f0\n"
+	got := parseBondSlaveNames(raw)
+	want := []string{"eth0", "eth1", "ens1f0"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
 	}
-	if m["0000:02:00.0"] != "nvme1" {
-		t.Errorf("nvme1 BDF mapping wrong: %v", m)
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("slave[%d] = %q, want %q", i, got[i], want[i])
+		}
 	}
 
-	netRaw := "lo -> ../../devices/virtual/net/lo\n" +
-		"eth0 -> ../../devices/pci0000:00/0000:00:1c.0/0000:03:00.0/net/eth0\n" +
-		"bond0 -> ../../devices/virtual/net/bond0\n"
-	nm := parseSysClassLinks(netRaw)
-	if nm["0000:03:00.0"] != "eth0" {
-		t.Errorf("eth0 mapping wrong: %v", nm)
+	if n := parseBondSlaveNames(""); len(n) != 0 {
+		t.Errorf("no bonds → want empty, got %v", n)
 	}
-	if len(nm) != 1 {
-		t.Errorf("virtual lo/bond0 should be skipped, got %v", nm)
+}
+
+func TestBDFFromReadlink(t *testing.T) {
+	// `readlink -f /sys/class/nvme/nvme0/device` resolves to the PCI dir; its
+	// basename is the BDF.
+	cases := map[string]string{
+		"/sys/devices/pci0000:00/0000:00:1d.0/0000:01:00.0\n": "0000:01:00.0",
+		"/sys/devices/pci0000:00/0000:00:1c.0/0000:03:00.0":   "0000:03:00.0",
+		"":                          "", // missing symlink
+		"/sys/devices/virtual/foo": "", // virtual device, basename not a BDF
+	}
+	for raw, want := range cases {
+		if got := bdfFromReadlink(raw); got != want {
+			t.Errorf("bdfFromReadlink(%q) = %q, want %q", raw, got, want)
+		}
 	}
 }
 
 // Real-world shape: an NVMe rated 32GT/s x4 negotiated down to 16GT/s x4 (the
 // user's reported case) → speed-only Warn. A second drive losing lanes (x4→x1)
-// → Critical.
+// → Critical. kind/name come from the want set (sysfs), not the lspci text.
 func TestParseAndEvalPCIeLinks(t *testing.T) {
 	raw := "0000:01:00.0 Non-Volatile memory controller: Samsung Electronics Co Ltd NVMe SSD PM173X\n" +
 		"\tLnkCap:\tPort #0, Speed 32GT/s, Width x4, ASPM not supported\n" +
@@ -158,10 +170,15 @@ func TestParseAndEvalPCIeLinks(t *testing.T) {
 		"\tLnkSta:\tSpeed 16GT/s, Width x8\n" +
 		"0000:00:1f.0 ISA bridge: Intel Corporation C620\n"
 
-	names := map[string]string{"0000:01:00.0": "nvme0", "0000:03:00.0": "eth0"}
-	devs := parseLspciLinks(raw, names)
+	want := map[string]pcieMeta{
+		"0000:01:00.0": {kind: "NVMe", name: "nvme0"},
+		"0000:02:00.0": {kind: "NVMe", name: "nvme1"},
+		"0000:03:00.0": {kind: "NIC", name: "eth0"},
+		// 0000:00:1f.0 (ISA bridge) intentionally absent → must be skipped.
+	}
+	devs := parseLspciLinks(raw, want)
 	if len(devs) != 3 {
-		t.Fatalf("want 3 tracked devices (2 NVMe + 1 NIC), got %d", len(devs))
+		t.Fatalf("want 3 tracked devices, got %d", len(devs))
 	}
 	if devs[0].name != "nvme0" || devs[0].kind != "NVMe" {
 		t.Errorf("device 0 = %+v, want nvme0/NVMe", devs[0])
@@ -178,7 +195,7 @@ func TestParseAndEvalPCIeLinks(t *testing.T) {
 	if byLevel[LevelCritical] != 1 {
 		t.Errorf("want 1 Critical (width downgrade), got %d", byLevel[LevelCritical])
 	}
-	// The healthy NIC and the ISA bridge must not produce a finding.
+	// The healthy NIC and the skipped ISA bridge must not produce a finding.
 	if byLevel[LevelOK] != 0 {
 		t.Errorf("healthy devices should be silent when others are degraded, got %d OK", byLevel[LevelOK])
 	}

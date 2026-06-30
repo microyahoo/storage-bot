@@ -135,17 +135,29 @@ func (hwPCIeLink) Name() string        { return "hw_pcie_link" }
 func (hwPCIeLink) Description() string { return "NVMe/网卡 PCIe 链路速率与宽度" }
 func (hwPCIeLink) Scope() Scope        { return NodeScope }
 func (hwPCIeLink) Inspect(ic *InspectContext) ([]Finding, error) {
-	// Map BDF → kernel name from sysfs. `ls -l` symlink targets embed the PCI path;
-	// missing dirs (no NVMe, etc.) just yield empty output via the `||` fallback.
-	names := map[string]string{}
-	for _, kind := range []string{"nvme", "net"} {
-		out, err := ic.RunOnNode("ls -l /sys/class/" + kind + "/ 2>/dev/null || true")
-		if err != nil && out == "" {
-			continue
+	// Build the want set: NVMe drives (all of /sys/class/nvme/*) + the physical
+	// NICs enslaved to a bond (never virtual lo/cali*/bond masters). Each device's
+	// BDF is the basename of its `device` symlink — readlink resolves it directly,
+	// no path-pattern guessing, and virtual devices (no symlink) drop out.
+	want := map[string]pcieMeta{}
+
+	nvmeList, _ := ic.RunOnNode("ls /sys/class/nvme/ 2>/dev/null || true")
+	for _, dev := range strings.Fields(nvmeList) {
+		if bdf := resolveDeviceBDF(ic, "/sys/class/nvme/"+dev+"/device"); bdf != "" {
+			want[bdf] = pcieMeta{kind: "NVMe", name: dev}
 		}
-		for bdf, dev := range parseSysClassLinks(out) {
-			names[bdf] = dev
+	}
+
+	bondRaw, _ := ic.RunOnNode("grep -H '^Slave Interface' /proc/net/bonding/bond* 2>/dev/null || true")
+	for _, nic := range parseBondSlaveNames(bondRaw) {
+		if bdf := resolveDeviceBDF(ic, "/sys/class/net/"+nic+"/device"); bdf != "" {
+			want[bdf] = pcieMeta{kind: "NIC", name: nic}
 		}
+	}
+
+	if len(want) == 0 {
+		return []Finding{{Item: "hw_pcie_link", Node: ic.Node.Name, Level: LevelOK,
+			Summary: "未发现可检测的 NVMe/bond 网卡 PCIe 链路"}}, nil
 	}
 
 	// Single lspci pass for all devices. CombinedOutput captures "command not
@@ -159,11 +171,22 @@ func (hwPCIeLink) Inspect(ic *InspectContext) ([]Finding, error) {
 			Summary: "lspci 不可用", Advice: "节点未安装 pciutils，建议 `yum install pciutils`"}}, nil
 	}
 
-	devs := parseLspciLinks(raw, names)
+	devs := parseLspciLinks(raw, want)
 	sortPCIeDevs(devs)
 	out := evalPCIeLinks(devs)
 	for i := range out {
 		out[i].Node = ic.Node.Name
 	}
 	return out, nil
+}
+
+// resolveDeviceBDF reads a device's PCI BDF from its sysfs `device` symlink. The
+// resolved target's basename is the BDF; an absent symlink (virtual device) or
+// non-PCI parent yields "".
+func resolveDeviceBDF(ic *InspectContext, devicePath string) string {
+	out, err := ic.RunOnNode("readlink -f " + devicePath)
+	if err != nil && out == "" {
+		return ""
+	}
+	return bdfFromReadlink(out)
 }
