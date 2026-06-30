@@ -116,3 +116,91 @@ func TestParseBond(t *testing.T) {
 		t.Errorf("MII down → %v, want Critical", f.Level)
 	}
 }
+
+func TestParseSysClassLinks(t *testing.T) {
+	// `ls -l /sys/class/nvme/` and `/sys/class/net/` style output. Virtual
+	// interfaces (lo, bond0) have no PCI BDF in their target and are skipped.
+	raw := "total 0\n" +
+		"lrwxrwxrwx 1 root root 0 Jun 30 10:00 nvme0 -> ../../devices/pci0000:00/0000:00:1d.0/0000:01:00.0/nvme/nvme0\n" +
+		"lrwxrwxrwx 1 root root 0 Jun 30 10:00 nvme1 -> ../../devices/pci0000:00/0000:00:1d.4/0000:02:00.0/nvme/nvme1\n"
+	m := parseSysClassLinks(raw)
+	if m["0000:01:00.0"] != "nvme0" {
+		t.Errorf("nvme0 BDF mapping wrong: %v", m)
+	}
+	if m["0000:02:00.0"] != "nvme1" {
+		t.Errorf("nvme1 BDF mapping wrong: %v", m)
+	}
+
+	netRaw := "lo -> ../../devices/virtual/net/lo\n" +
+		"eth0 -> ../../devices/pci0000:00/0000:00:1c.0/0000:03:00.0/net/eth0\n" +
+		"bond0 -> ../../devices/virtual/net/bond0\n"
+	nm := parseSysClassLinks(netRaw)
+	if nm["0000:03:00.0"] != "eth0" {
+		t.Errorf("eth0 mapping wrong: %v", nm)
+	}
+	if len(nm) != 1 {
+		t.Errorf("virtual lo/bond0 should be skipped, got %v", nm)
+	}
+}
+
+// Real-world shape: an NVMe rated 32GT/s x4 negotiated down to 16GT/s x4 (the
+// user's reported case) → speed-only Warn. A second drive losing lanes (x4→x1)
+// → Critical.
+func TestParseAndEvalPCIeLinks(t *testing.T) {
+	raw := "0000:01:00.0 Non-Volatile memory controller: Samsung Electronics Co Ltd NVMe SSD PM173X\n" +
+		"\tLnkCap:\tPort #0, Speed 32GT/s, Width x4, ASPM not supported\n" +
+		"\tLnkSta:\tSpeed 16GT/s (downgraded), Width x4 (ok)\n" +
+		"0000:02:00.0 Non-Volatile memory controller: Samsung Electronics Co Ltd NVMe SSD PM173X\n" +
+		"\tLnkCap:\tPort #0, Speed 32GT/s, Width x4\n" +
+		"\tLnkSta:\tSpeed 32GT/s, Width x1 (downgraded)\n" +
+		"0000:03:00.0 Ethernet controller: Mellanox Technologies MT2910 ConnectX-7\n" +
+		"\tLnkCap:\tPort #0, Speed 16GT/s, Width x8\n" +
+		"\tLnkSta:\tSpeed 16GT/s, Width x8\n" +
+		"0000:00:1f.0 ISA bridge: Intel Corporation C620\n"
+
+	names := map[string]string{"0000:01:00.0": "nvme0", "0000:03:00.0": "eth0"}
+	devs := parseLspciLinks(raw, names)
+	if len(devs) != 3 {
+		t.Fatalf("want 3 tracked devices (2 NVMe + 1 NIC), got %d", len(devs))
+	}
+	if devs[0].name != "nvme0" || devs[0].kind != "NVMe" {
+		t.Errorf("device 0 = %+v, want nvme0/NVMe", devs[0])
+	}
+
+	findings := evalPCIeLinks(devs)
+	byLevel := map[Level]int{}
+	for _, f := range findings {
+		byLevel[f.Level]++
+	}
+	if byLevel[LevelWarn] != 1 {
+		t.Errorf("want 1 Warn (speed downgrade), got %d (findings=%+v)", byLevel[LevelWarn], findings)
+	}
+	if byLevel[LevelCritical] != 1 {
+		t.Errorf("want 1 Critical (width downgrade), got %d", byLevel[LevelCritical])
+	}
+	// The healthy NIC and the ISA bridge must not produce a finding.
+	if byLevel[LevelOK] != 0 {
+		t.Errorf("healthy devices should be silent when others are degraded, got %d OK", byLevel[LevelOK])
+	}
+}
+
+func TestEvalPCIeLinksAllOK(t *testing.T) {
+	devs := []*pcieDev{{
+		bdf: "0000:01:00.0", kind: "NVMe", name: "nvme0",
+		capSpeed: 32, capWidth: 4, staSpeed: 32, staWidth: 4,
+	}}
+	f := evalPCIeLinks(devs)
+	if len(f) != 1 || f[0].Level != LevelOK {
+		t.Errorf("all matched → want single OK, got %+v", f)
+	}
+}
+
+func TestEvalPCIeLinksNoDevices(t *testing.T) {
+	f := evalPCIeLinks(nil)
+	if len(f) != 1 || f[0].Level != LevelOK {
+		t.Fatalf("no devices → want single OK, got %+v", f)
+	}
+	if !strings.Contains(f[0].Summary, "未发现") {
+		t.Errorf("no-device summary = %q", f[0].Summary)
+	}
+}

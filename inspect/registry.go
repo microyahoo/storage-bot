@@ -7,7 +7,7 @@ type Registry struct {
 func NewRegistry() *Registry {
 	r := &Registry{}
 	r.add(&cephHealth{}, &cephOSD{}, &cephMon{}, &cephPG{}, &cephCapacity{}, &cephSlowOps{}, &cephCrash{})
-	r.add(&hwCPU{}, &hwMemory{}, &hwDiskSmart{}, &hwDiskUsage{}, &hwNIC{}, &hwBond{})
+	r.add(&hwCPU{}, &hwMemory{}, &hwDiskSmart{}, &hwDiskUsage{}, &hwNIC{}, &hwBond{}, &hwPCIeLink{})
 	return r
 }
 

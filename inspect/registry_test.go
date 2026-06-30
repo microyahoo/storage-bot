@@ -22,13 +22,16 @@ func TestRegistryScopes(t *testing.T) {
 	if !names(node)["hw_memory"] {
 		t.Errorf("hw_memory not in node scope")
 	}
-	if len(r.All()) != 13 {
-		t.Errorf("total inspectors = %d, want 13", len(r.All()))
+	if !names(node)["hw_pcie_link"] {
+		t.Errorf("hw_pcie_link not in node scope")
+	}
+	if len(r.All()) != 14 {
+		t.Errorf("total inspectors = %d, want 14", len(r.All()))
 	}
 	if len(cluster) != 7 {
 		t.Errorf("cluster-scope inspectors = %d, want 7", len(cluster))
 	}
-	if len(node) != 6 {
-		t.Errorf("node-scope inspectors = %d, want 6", len(node))
+	if len(node) != 7 {
+		t.Errorf("node-scope inspectors = %d, want 7", len(node))
 	}
 }

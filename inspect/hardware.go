@@ -125,3 +125,45 @@ func (hwBond) Inspect(ic *InspectContext) ([]Finding, error) {
 	f.Node = ic.Node.Name
 	return []Finding{f}, nil
 }
+
+// hwPCIeLink checks that NVMe drives and NICs negotiated their full rated PCIe
+// link (LnkCap vs LnkSta). A downgrade — fewer lanes or a lower speed — silently
+// caps disk/network throughput, so it is worth surfacing in inspection.
+type hwPCIeLink struct{}
+
+func (hwPCIeLink) Name() string        { return "hw_pcie_link" }
+func (hwPCIeLink) Description() string { return "NVMe/网卡 PCIe 链路速率与宽度" }
+func (hwPCIeLink) Scope() Scope        { return NodeScope }
+func (hwPCIeLink) Inspect(ic *InspectContext) ([]Finding, error) {
+	// Map BDF → kernel name from sysfs. `ls -l` symlink targets embed the PCI path;
+	// missing dirs (no NVMe, etc.) just yield empty output via the `||` fallback.
+	names := map[string]string{}
+	for _, kind := range []string{"nvme", "net"} {
+		out, err := ic.RunOnNode("ls -l /sys/class/" + kind + "/ 2>/dev/null || true")
+		if err != nil && out == "" {
+			continue
+		}
+		for bdf, dev := range parseSysClassLinks(out) {
+			names[bdf] = dev
+		}
+	}
+
+	// Single lspci pass for all devices. CombinedOutput captures "command not
+	// found" into raw, so detect a missing binary the way hwDiskSmart does.
+	raw, e := ic.RunOnNode("lspci -Dvvv 2>&1")
+	if e != nil && raw == "" {
+		raw = e.Error()
+	}
+	if strings.Contains(raw, "command not found") || strings.Contains(raw, "not installed") {
+		return []Finding{{Item: "hw_pcie_link", Node: ic.Node.Name, Level: LevelUnknown,
+			Summary: "lspci 不可用", Advice: "节点未安装 pciutils，建议 `yum install pciutils`"}}, nil
+	}
+
+	devs := parseLspciLinks(raw, names)
+	sortPCIeDevs(devs)
+	out := evalPCIeLinks(devs)
+	for i := range out {
+		out[i].Node = ic.Node.Name
+	}
+	return out, nil
+}

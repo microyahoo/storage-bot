@@ -3,6 +3,7 @@ package inspect
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -229,4 +230,197 @@ func parseBond(raw string) Finding {
 		f.Level, f.Summary = LevelOK, "bond 链路正常"
 	}
 	return f
+}
+
+// pcieDev is one PCIe endpoint (NVMe controller or NIC) with its rated link
+// capability (LnkCap) and currently negotiated link state (LnkSta).
+type pcieDev struct {
+	bdf      string // PCI domain:bus:device.function, e.g. 0000:01:00.0
+	kind     string // "NVMe" | "NIC"
+	name     string // kernel name, e.g. nvme0 / eth0
+	model    string // lspci device description
+	capSpeed float64
+	capWidth int
+	staSpeed float64
+	staWidth int
+	capRaw   string // "Speed 32GT/s, Width x4"
+	staRaw   string
+}
+
+var (
+	bdfRe       = regexp.MustCompile(`[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-9a-f]`)
+	pcieSpeedRe = regexp.MustCompile(`Speed ([0-9.]+)GT/s`)
+	pcieWidthRe = regexp.MustCompile(`Width x([0-9]+)`)
+)
+
+// parseSysClassLinks maps PCI BDF → kernel device name from `ls -l /sys/class/<kind>/`
+// output. Each symlink target embeds the device's PCI path; the LAST BDF in the
+// path is the device's own function (mirrors the reference script's `tail -1`).
+// Virtual devices (lo, bond*, cali*) have no BDF in their target and are skipped.
+func parseSysClassLinks(raw string) map[string]string {
+	out := map[string]string{}
+	for _, line := range strings.Split(raw, "\n") {
+		name, target, ok := strings.Cut(line, " -> ")
+		if !ok {
+			continue
+		}
+		fields := strings.Fields(name)
+		if len(fields) == 0 {
+			continue
+		}
+		dev := fields[len(fields)-1]
+		if bdfs := bdfRe.FindAllString(target, -1); len(bdfs) > 0 {
+			out[bdfs[len(bdfs)-1]] = dev
+		}
+	}
+	return out
+}
+
+func parsePCIeSpeed(s string) float64 {
+	if m := pcieSpeedRe.FindStringSubmatch(s); m != nil {
+		v, _ := strconv.ParseFloat(m[1], 64)
+		return v
+	}
+	return 0
+}
+
+func parsePCIeWidth(s string) int {
+	if m := pcieWidthRe.FindStringSubmatch(s); m != nil {
+		v, _ := strconv.Atoi(m[1])
+		return v
+	}
+	return 0
+}
+
+// pcieLinkSummary extracts the "Speed …, Width x…" portion of a LnkCap/LnkSta line.
+func pcieLinkSummary(s string) string {
+	return strings.TrimSpace(pcieSpeedRe.FindString(s) + ", " + pcieWidthRe.FindString(s))
+}
+
+// parseLspciLinks parses `lspci -Dvvv` output into pcieDev records, keeping only
+// NVMe controllers and NICs. names maps BDF → kernel device name (from sysfs); a
+// device absent from names keeps an empty name and is identified by BDF + model.
+//
+// Block shape (header at column 0, capabilities indented):
+//
+//	0000:01:00.0 Non-Volatile memory controller: Samsung ... PM173X
+//	        LnkCap: Port #0, Speed 32GT/s, Width x4, ...
+//	        LnkSta: Speed 16GT/s (downgraded), Width x4, ...
+//
+// Only "LnkCap:"/"LnkSta:" (not the LnkCap2/LnkSta2 variants) carry the rated and
+// negotiated speed/width we compare.
+func parseLspciLinks(raw string, names map[string]string) []*pcieDev {
+	byBDF := map[string]*pcieDev{}
+	var order []string
+	var cur *pcieDev
+
+	for _, line := range strings.Split(raw, "\n") {
+		// A header line starts at column 0 with a BDF; capability lines are indented.
+		if line != "" && line[0] != ' ' && line[0] != '\t' {
+			cur = nil
+			m := bdfRe.FindString(line)
+			if m == "" {
+				continue
+			}
+			kind := ""
+			switch {
+			case strings.Contains(line, "Non-Volatile memory controller"):
+				kind = "NVMe"
+			case strings.Contains(line, "Ethernet controller"), strings.Contains(line, "Network controller"):
+				kind = "NIC"
+			default:
+				continue // not a device we track
+			}
+			model := ""
+			if _, desc, ok := strings.Cut(line, ": "); ok {
+				model = strings.TrimSpace(desc)
+			}
+			cur = &pcieDev{bdf: m, kind: kind, name: names[m], model: model}
+			byBDF[m] = cur
+			order = append(order, m)
+			continue
+		}
+		if cur == nil {
+			continue
+		}
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(trimmed, "LnkCap:"):
+			cur.capSpeed, cur.capWidth, cur.capRaw = parsePCIeSpeed(trimmed), parsePCIeWidth(trimmed), pcieLinkSummary(trimmed)
+		case strings.HasPrefix(trimmed, "LnkSta:"):
+			cur.staSpeed, cur.staWidth, cur.staRaw = parsePCIeSpeed(trimmed), parsePCIeWidth(trimmed), pcieLinkSummary(trimmed)
+		}
+	}
+
+	out := make([]*pcieDev, 0, len(order))
+	for _, bdf := range order {
+		out = append(out, byBDF[bdf])
+	}
+	return out
+}
+
+// evalPCIeLinks turns parsed devices into findings. A device whose negotiated
+// LnkSta is below its rated LnkCap is flagged: width loss → Critical (a lane is
+// physically dead, halving throughput), speed-only downgrade → Warn. Devices with
+// no parseable LnkCap/LnkSta are skipped (some bridges expose no link caps). When
+// nothing is degraded, a single OK summary is returned.
+func evalPCIeLinks(devs []*pcieDev) []Finding {
+	var out []Finding
+	checked := 0
+	for _, d := range devs {
+		if d.capSpeed == 0 || d.capWidth == 0 || d.staSpeed == 0 || d.staWidth == 0 {
+			continue
+		}
+		checked++
+		widthDown := d.staWidth < d.capWidth
+		speedDown := d.staSpeed < d.capSpeed
+		if !widthDown && !speedDown {
+			continue
+		}
+
+		id := d.bdf
+		if d.name != "" {
+			id = d.name + " (" + d.bdf + ")"
+		}
+		f := Finding{
+			Item:   "hw_pcie_link",
+			Detail: fmt.Sprintf("%s %s\nLnkCap: %s\nLnkSta: %s", d.kind, d.model, d.capRaw, d.staRaw),
+			Metrics: map[string]string{
+				"kind": d.kind, "bdf": d.bdf, "name": d.name,
+				"cap": d.capRaw, "sta": d.staRaw,
+			},
+		}
+		switch {
+		case widthDown:
+			f.Level = LevelCritical
+			f.Summary = fmt.Sprintf("%s %s PCIe 链路降级：宽度 x%d→x%d，速率 %sGT/s→%sGT/s",
+				d.kind, id, d.capWidth, d.staWidth, trimFloat(d.capSpeed), trimFloat(d.staSpeed))
+			f.Advice = "PCIe lane 数下降，检查插槽接触/插拔重插，性能会显著受损"
+		default: // speed-only
+			f.Level = LevelWarn
+			f.Summary = fmt.Sprintf("%s %s PCIe 链路速率降级：%sGT/s→%sGT/s（宽度 x%d 正常）",
+				d.kind, id, trimFloat(d.capSpeed), trimFloat(d.staSpeed), d.staWidth)
+			f.Advice = "PCIe 速率未跑满，检查 BIOS PCIe 配置/信号质量，吞吐会下降"
+		}
+		out = append(out, f)
+	}
+
+	if len(out) == 0 {
+		summary := "PCIe 链路速率/宽度正常"
+		if checked == 0 {
+			summary = "未发现可检测的 NVMe/网卡 PCIe 链路"
+		}
+		return []Finding{{Item: "hw_pcie_link", Level: LevelOK, Summary: summary}}
+	}
+	return out
+}
+
+// trimFloat renders a PCIe speed without trailing ".0" (32.0→"32", 2.5→"2.5").
+func trimFloat(f float64) string {
+	return strconv.FormatFloat(f, 'f', -1, 64)
+}
+
+// sortPCIeDevs orders devices by BDF for deterministic output.
+func sortPCIeDevs(devs []*pcieDev) {
+	sort.Slice(devs, func(i, j int) bool { return devs[i].bdf < devs[j].bdf })
 }
