@@ -412,6 +412,7 @@ func (h *Handler) helpMessage() string {
 		"@bot kernel cdn bd-cdn-node02 keyword=link\n" +
 		"@bot nic down cdn bd-cdn-node02 eth0 --yes\n" +
 		"@bot nic up cdn bd-cdn-node02 eth0 --yes\n" +
+		"@bot 重启 mon a cluster-01 --yes\n" +
 		"@bot set nobackfill all except cdn-test\n" +
 		"@bot optimize rgw cluster-01 max=100\n" +
 		"@bot yrfs01 user liangzheng private\n" +
@@ -488,6 +489,8 @@ func (h *Handler) listSkills() string {
 	sb.WriteString("@bot set noout cluster-01                        # set_noout\n")
 	sb.WriteString("@bot unset noout cluster-01                      # unset_noout\n")
 	sb.WriteString("@bot optimize rgw cluster-01 max=100             # optimize_rgw_pg\n")
+	sb.WriteString("@bot 重启 mon a cluster-01 --yes                  # restart_mon\n")
+	sb.WriteString("@bot restart mgr b cluster-01 --yes              # restart_mgr\n")
 	sb.WriteString("```")
 	return sb.String()
 }
