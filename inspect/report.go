@@ -87,6 +87,20 @@ func (r *Report) AbnormalByNode() []nodeGroup {
 	return groups
 }
 
+// nodeGroupHeader returns the bold header line for a node group:
+// cluster-scope (empty node) → "📦 **集群级**", node with IP → "🖥 **name**（ip）".
+// Shared by RenderText and RenderCard so the two surfaces stay identical.
+func nodeGroupHeader(g nodeGroup) string {
+	switch {
+	case g.node == "":
+		return "📦 **集群级**"
+	case g.nodeIP != "":
+		return fmt.Sprintf("🖥 **%s**（%s）", g.node, g.nodeIP)
+	default:
+		return fmt.Sprintf("🖥 **%s**", g.node)
+	}
+}
+
 func itemLabel(f Finding) string {
 	if f.Node != "" {
 		label := f.Item + " · " + f.Node
@@ -118,13 +132,7 @@ func (r *Report) RenderText() string {
 			if gi > 0 {
 				b.WriteString("\n---\n")
 			}
-			if g.node == "" {
-				b.WriteString("📦 **集群级**\n")
-			} else if g.nodeIP != "" {
-				fmt.Fprintf(&b, "🖥 **%s**（%s）\n", g.node, g.nodeIP)
-			} else {
-				fmt.Fprintf(&b, "🖥 **%s**\n", g.node)
-			}
+			b.WriteString(nodeGroupHeader(g) + "\n")
 			for _, f := range g.findings {
 				fmt.Fprintf(&b, "%s `%s` — %s\n", f.Level.Emoji(), f.Item, f.Summary)
 				if f.Advice != "" {
@@ -177,17 +185,8 @@ func (r *Report) RenderCard(webBaseURL string) *card.Card {
 		// output doesn't blur into a single wall of text — mirrors RenderText.
 		for _, g := range ab {
 			c.Divider()
-			var nodeHeader string
-			if g.node == "" {
-				nodeHeader = "📦 **集群级**"
-			} else if g.nodeIP != "" {
-				nodeHeader = fmt.Sprintf("🖥 **%s**（%s）", g.node, g.nodeIP)
-			} else {
-				nodeHeader = fmt.Sprintf("🖥 **%s**", g.node)
-			}
-
 			var t strings.Builder
-			t.WriteString(nodeHeader + "\n")
+			t.WriteString(nodeGroupHeader(g) + "\n")
 			t.WriteString("**级别 | 巡检项 | 结论**\n")
 			for _, f := range g.findings {
 				row := fmt.Sprintf("%s | `%s` | %s", f.Level.Emoji(), f.Item, f.Summary)
