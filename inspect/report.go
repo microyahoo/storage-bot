@@ -150,7 +150,10 @@ func (r *Report) RenderText() string {
 	return b.String()
 }
 
-func themeFor(l Level) card.Theme {
+// ThemeForLevel maps an inspect.Level to the Feishu card header colour.
+// Exported so bot/handler.go can use the same mapping for chat-triggered
+// inspection replies (avoiding a duplicated switch there).
+func ThemeForLevel(l Level) card.Theme {
 	switch l {
 	case LevelCritical:
 		return card.ThemeRed
@@ -160,6 +163,8 @@ func themeFor(l Level) card.Theme {
 		return card.ThemeGreen
 	}
 }
+
+func themeFor(l Level) card.Theme { return ThemeForLevel(l) }
 
 // RenderCard builds the reviewed layout: colored header + stats + abnormal
 // markdown table + collapsed-normal line + report link. webBaseURL may be ""

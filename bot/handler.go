@@ -899,19 +899,9 @@ func cardForAction(action intent.Action, body string, err error, inspectLevel in
 	case intent.ActionRESTStorage:
 		return card.New("📦", titleWithCluster("焱融存储", action.StorageName), card.ThemeTurquoise).Body(body)
 	case intent.ActionInspect:
-		// Use the actual report severity so the card header color matches the
-		// finding level — same mapping as RenderCard/themeFor on the scheduler path.
-		theme := card.ThemeGreen
-		emoji := "🟢"
-		switch inspectLevel {
-		case inspect.LevelCritical:
-			theme, emoji = card.ThemeRed, "🔴"
-		case inspect.LevelWarn:
-			theme, emoji = card.ThemeOrange, "🟡"
-		case inspect.LevelUnknown:
-			theme, emoji = card.ThemeGray, "⚪"
-		}
-		return card.New(emoji, titleWithCluster("集群巡检", action.ClusterName), theme).Body(body)
+		return card.New(inspectLevel.Emoji(),
+			titleWithCluster("集群巡检", action.ClusterName),
+			inspect.ThemeForLevel(inspectLevel)).Body(body)
 	default:
 		return card.New("💬", "Storage Bot", card.ThemeBlue).Body(body)
 	}
