@@ -168,17 +168,38 @@ func (r *Report) RenderCard(webBaseURL string) *card.Card {
 	c.Body(stat)
 	c.Divider()
 
-	ab := r.Abnormal()
+	ab := r.AbnormalByNode()
 	if len(ab) == 0 {
 		c.Body("✅ 全部正常")
 	} else {
-		var t strings.Builder
-		t.WriteString("**级别 | 巡检项 | 结论**\n")
-		for _, f := range ab {
-			fmt.Fprintf(&t, "%s | `%s` | %s\n", f.Level.Emoji(), itemLabel(f), f.Summary)
+		// One card section per node, each with a node header and its own
+		// mini-table. Sections are separated by a Divider so dense multi-node
+		// output doesn't blur into a single wall of text — mirrors RenderText.
+		for _, g := range ab {
+			c.Divider()
+			var nodeHeader string
+			if g.node == "" {
+				nodeHeader = "📦 **集群级**"
+			} else if g.nodeIP != "" {
+				nodeHeader = fmt.Sprintf("🖥 **%s**（%s）", g.node, g.nodeIP)
+			} else {
+				nodeHeader = fmt.Sprintf("🖥 **%s**", g.node)
+			}
+
+			var t strings.Builder
+			t.WriteString(nodeHeader + "\n")
+			t.WriteString("**级别 | 巡检项 | 结论**\n")
+			for _, f := range g.findings {
+				row := fmt.Sprintf("%s | `%s` | %s", f.Level.Emoji(), f.Item, f.Summary)
+				if f.Advice != "" {
+					row += fmt.Sprintf("\n　建议：%s", f.Advice)
+				}
+				t.WriteString(row + "\n")
+			}
+			c.Body(t.String())
 		}
-		c.Body(t.String())
 		if ok > 0 {
+			c.Divider()
 			c.Body(fmt.Sprintf("🟢 其余 %d 项正常", ok))
 		}
 	}
