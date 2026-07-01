@@ -180,8 +180,9 @@ func (h *Handler) HandleMessage(ctx context.Context, event *larkim.P2MessageRece
 	defer cancel()
 
 	var (
-		reply string
-		err   error
+		reply        string
+		err          error
+		inspectLevel inspect.Level
 	)
 
 	switch action.Type {
@@ -206,7 +207,7 @@ func (h *Handler) HandleMessage(ctx context.Context, event *larkim.P2MessageRece
 	case intent.ActionRESTStorage:
 		reply, err = h.handleRESTStorage(ctx, action)
 	case intent.ActionInspect:
-		reply, err = h.handleInspect(ctx, action)
+		reply, inspectLevel, err = h.handleInspect(ctx, action)
 	}
 
 	status := "ok"
@@ -219,7 +220,7 @@ func (h *Handler) HandleMessage(ctx context.Context, event *larkim.P2MessageRece
 		h.audit.Record(userID, action.ClusterName, action.Type.String(), text, status)
 	}
 
-	c := cardForAction(action, reply, err)
+	c := cardForAction(action, reply, err, inspectLevel)
 	return h.replyCard(ctx, *msg.MessageId, c)
 }
 
@@ -772,9 +773,9 @@ func isGateway(nodeHost, gwHost string) bool {
 // handleInspect runs cluster inspection. action.ClusterName == "" means all
 // clusters. Each cluster's report is rendered to text; cardForAction wraps the
 // combined body into one inspection card.
-func (h *Handler) handleInspect(ctx context.Context, action intent.Action) (string, error) {
+func (h *Handler) handleInspect(ctx context.Context, action intent.Action) (string, inspect.Level, error) {
 	if h.inspectRunner == nil {
-		return "巡检功能未启用（设置 config inspect.enabled: true）", nil
+		return "巡检功能未启用（设置 config inspect.enabled: true）", inspect.LevelOK, nil
 	}
 	var targets []string
 	if action.ClusterName != "" {
@@ -783,9 +784,10 @@ func (h *Handler) handleInspect(ctx context.Context, action intent.Action) (stri
 		targets = h.clusterMgr.List()
 	}
 	if len(targets) == 0 {
-		return "没有可巡检的集群", nil
+		return "没有可巡检的集群", inspect.LevelOK, nil
 	}
 	var b strings.Builder
+	worst := inspect.LevelOK
 	for i, name := range targets {
 		if i > 0 {
 			b.WriteString("\n\n═══════════════\n\n")
@@ -795,9 +797,12 @@ func (h *Handler) handleInspect(ctx context.Context, action intent.Action) (stri
 			fmt.Fprintf(&b, "❌ %s 巡检失败：%v\n", name, err)
 			continue
 		}
+		if rep.Overall > worst {
+			worst = rep.Overall
+		}
 		b.WriteString(rep.RenderText())
 	}
-	return b.String(), nil
+	return b.String(), worst, nil
 }
 
 // NotifyReport sends a report card to a specific chat. Implements inspect.Notifier
@@ -851,7 +856,7 @@ func (h *Handler) replyCard(ctx context.Context, messageID string, c *card.Card)
 // cardForAction wraps the handler's body string in a themed Feishu card. The
 // header (emoji + title + color) is chosen from the action type; errors always
 // flip to a red ⚠ header regardless of action.
-func cardForAction(action intent.Action, body string, err error) *card.Card {
+func cardForAction(action intent.Action, body string, err error, inspectLevel inspect.Level) *card.Card {
 	if err != nil {
 		return card.New("⚠️", "执行出错", card.ThemeRed).
 			Body(body).
@@ -894,7 +899,19 @@ func cardForAction(action intent.Action, body string, err error) *card.Card {
 	case intent.ActionRESTStorage:
 		return card.New("📦", titleWithCluster("焱融存储", action.StorageName), card.ThemeTurquoise).Body(body)
 	case intent.ActionInspect:
-		return card.New("🔍", titleWithCluster("集群巡检", action.ClusterName), card.ThemeTurquoise).Body(body)
+		// Use the actual report severity so the card header color matches the
+		// finding level — same mapping as RenderCard/themeFor on the scheduler path.
+		theme := card.ThemeGreen
+		emoji := "🟢"
+		switch inspectLevel {
+		case inspect.LevelCritical:
+			theme, emoji = card.ThemeRed, "🔴"
+		case inspect.LevelWarn:
+			theme, emoji = card.ThemeOrange, "🟡"
+		case inspect.LevelUnknown:
+			theme, emoji = card.ThemeGray, "⚪"
+		}
+		return card.New(emoji, titleWithCluster("集群巡检", action.ClusterName), theme).Body(body)
 	default:
 		return card.New("💬", "Storage Bot", card.ThemeBlue).Body(body)
 	}

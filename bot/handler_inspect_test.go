@@ -13,7 +13,7 @@ import (
 // return a clear hint rather than panicking.
 func TestHandleInspectDisabled(t *testing.T) {
 	h := &Handler{} // inspectRunner is nil
-	reply, err := h.handleInspect(context.Background(), intent.Action{Type: intent.ActionInspect})
+	reply, _, err := h.handleInspect(context.Background(), intent.Action{Type: intent.ActionInspect})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
