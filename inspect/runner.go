@@ -2,6 +2,7 @@ package inspect
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -94,17 +95,24 @@ func (r *Runner) Run(ctx context.Context, clusterInput string) (*Report, error) 
 
 // latestReport loads the most recent stored report for the cluster, or nil when
 // there is no store or no history yet (first run). Used as the bond link-failure
-// delta baseline.
+// delta baseline. A List/Load error is logged and treated as "no baseline" so a
+// corrupt or unreadable store degrades to a one-time baseline warning instead of
+// silently masquerading as a first run.
 func (r *Runner) latestReport(cluster string) *Report {
 	if r.store == nil {
 		return nil
 	}
 	names, err := r.store.List(cluster)
-	if err != nil || len(names) == 0 {
+	if err != nil {
+		slog.Warn("inspect: list history failed, using no baseline", "cluster", cluster, "error", err)
 		return nil
+	}
+	if len(names) == 0 {
+		return nil // no history yet — genuine first run
 	}
 	rep, err := r.store.Load(cluster, names[0])
 	if err != nil {
+		slog.Warn("inspect: load latest report failed, using no baseline", "cluster", cluster, "file", names[0], "error", err)
 		return nil
 	}
 	return rep

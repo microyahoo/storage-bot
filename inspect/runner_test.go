@@ -2,6 +2,8 @@ package inspect
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -161,5 +163,36 @@ func TestRunAppliesBondDeltaEndToEnd(t *testing.T) {
 	}
 	if rep.Overall != LevelOK {
 		t.Errorf("Overall = %v, want OK after downgrade", rep.Overall)
+	}
+}
+
+func TestLatestReportCorruptFile(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(dir, 30)
+
+	// 写一个损坏的报告文件（非法 JSON）到集群历史目录。
+	cd := filepath.Join(dir, "c1")
+	if err := os.MkdirAll(cd, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cd, "20260706-030000.json"), []byte("{not json"), 0o644); err != nil {
+		t.Fatalf("write corrupt: %v", err)
+	}
+
+	r := &Runner{store: store}
+	if rep := r.latestReport("c1"); rep != nil {
+		t.Errorf("corrupt latest report → %v, want nil (no baseline)", rep)
+	}
+}
+
+func TestLatestReportNilStoreAndEmpty(t *testing.T) {
+	// 无 store → nil。
+	if rep := (&Runner{}).latestReport("c1"); rep != nil {
+		t.Errorf("nil store → %v, want nil", rep)
+	}
+	// 有 store 但无历史 → nil（真正的首次巡检）。
+	r := &Runner{store: NewStore(t.TempDir(), 30)}
+	if rep := r.latestReport("c1"); rep != nil {
+		t.Errorf("empty history → %v, want nil", rep)
 	}
 }
