@@ -123,8 +123,8 @@ func TestParseBond(t *testing.T) {
 		"/proc/net/bonding/bond0:MII Status: up\n" +
 		"/proc/net/bonding/bond1:Link Failure Count: 5\n" +
 		"/proc/net/bonding/bond1:MII Status: up\n"
-	if f := parseBond(sum); f.Metrics["link_failure_total"] != "8" {
-		t.Errorf("summed link_failure_total = %q, want \"8\"", f.Metrics["link_failure_total"])
+	if f := parseBond(sum); f.Level != LevelWarn || f.Metrics["link_failure_total"] != "8" {
+		t.Errorf("summed bond → level %v total %q, want Warn \"8\"", f.Level, f.Metrics["link_failure_total"])
 	}
 
 	// failTotal==0 仍写 total=0，级别 OK。
