@@ -49,3 +49,52 @@ func TestRunnerAggregates(t *testing.T) {
 		t.Errorf("hw_y should run per node, got nodes %v", nodeNames)
 	}
 }
+
+func TestRunLoadsPrevForBondDelta(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(dir, 30)
+
+	// 上一次报告：n1 累计 10 次。
+	prev := &Report{
+		Cluster:   "c1",
+		StartedAt: time.Date(2026, 7, 6, 3, 0, 0, 0, time.UTC),
+		Findings: []Finding{{
+			Item: "hw_bond", Node: "n1", Level: LevelWarn,
+			Summary: "bond 累计 Link Failure 10 次",
+			Metrics: map[string]string{"link_failure_total": "10"},
+		}},
+	}
+	if err := store.Save(prev); err != nil {
+		t.Fatalf("save prev: %v", err)
+	}
+
+	// 本次：n1 累计 10 次（无新增）→ 期望被降级为 OK。
+	reg := &Registry{}
+	reg.add(fakeInspector{"hw_bond", NodeScope, []Finding{{
+		Item: "hw_bond", Level: LevelWarn,
+		Summary: "bond 累计 Link Failure 10 次",
+		Metrics: map[string]string{"link_failure_total": "10"},
+	}}})
+	r := &Runner{registry: reg, store: store}
+
+	prevRep := r.latestReport("c1")
+	if prevRep == nil {
+		t.Fatal("latestReport returned nil, want the saved prev report")
+	}
+
+	now := time.Date(2026, 7, 7, 3, 0, 0, 0, time.UTC)
+	rep := r.runWith(context.Background(), "c1", nil, nil,
+		[]config.SSHNode{{Name: "n1"}}, config.Thresholds{}, now)
+	applyBondDelta(rep, prevRep)
+	rep.Finalize()
+
+	var got Finding
+	for _, f := range rep.Findings {
+		if f.Item == "hw_bond" {
+			got = f
+		}
+	}
+	if got.Level != LevelOK {
+		t.Errorf("no-increase bond → %v, want OK", got.Level)
+	}
+}
