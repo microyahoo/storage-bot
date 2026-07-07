@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/microyahoo/storage-bot/config"
+	"github.com/microyahoo/storage-bot/executor"
 )
 
 type fakeInspector struct {
@@ -96,5 +97,69 @@ func TestRunLoadsPrevForBondDelta(t *testing.T) {
 	}
 	if got.Level != LevelOK {
 		t.Errorf("no-increase bond → %v, want OK", got.Level)
+	}
+}
+
+type fakeClusterProvider struct {
+	name  string
+	nodes []config.SSHNode
+}
+
+func (f fakeClusterProvider) FindByPrefix(string) (string, *config.ClusterConfig, error) {
+	return f.name, &config.ClusterConfig{}, nil
+}
+func (f fakeClusterProvider) KubeExecutor(string, *config.ClusterConfig) (*executor.KubeExecutor, error) {
+	return nil, nil
+}
+func (f fakeClusterProvider) ResolveSSHNodes(context.Context, string, *config.ClusterConfig) ([]config.SSHNode, error) {
+	return f.nodes, nil
+}
+
+func TestRunAppliesBondDeltaEndToEnd(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(dir, 30)
+
+	// 上一次报告：n1 累计 10 次。
+	prev := &Report{
+		Cluster:   "c1",
+		StartedAt: time.Date(2026, 7, 6, 3, 0, 0, 0, time.UTC),
+		Findings: []Finding{{
+			Item: "hw_bond", Node: "n1", Level: LevelWarn,
+			Summary: "bond 累计 Link Failure 10 次",
+			Metrics: map[string]string{"link_failure_total": "10"},
+		}},
+	}
+	if err := store.Save(prev); err != nil {
+		t.Fatalf("save prev: %v", err)
+	}
+
+	// 本次巡检 n1 仍是 10 次（无新增）→ Run 应经 applyBondDelta 把它降级为 OK。
+	reg := &Registry{}
+	reg.add(fakeInspector{"hw_bond", NodeScope, []Finding{{
+		Item: "hw_bond", Level: LevelWarn,
+		Summary: "bond 累计 Link Failure 10 次",
+		Metrics: map[string]string{"link_failure_total": "10"},
+	}}})
+	r := &Runner{
+		registry: reg,
+		store:    store,
+		clusters: fakeClusterProvider{name: "c1", nodes: []config.SSHNode{{Name: "n1"}}},
+	}
+
+	rep, err := r.Run(context.Background(), "c1")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	var got Finding
+	for _, f := range rep.Findings {
+		if f.Item == "hw_bond" {
+			got = f
+		}
+	}
+	if got.Level != LevelOK {
+		t.Errorf("Run should downgrade no-increase bond → %v, want OK", got.Level)
+	}
+	if rep.Overall != LevelOK {
+		t.Errorf("Overall = %v, want OK after downgrade", rep.Overall)
 	}
 }

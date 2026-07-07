@@ -159,6 +159,8 @@ func (r *Runner) runWith(ctx context.Context, name string, ke *executor.KubeExec
 	}
 	wg.Wait()
 
+	// Finalize here so callers using runWith directly (tests) get Overall set;
+	// Run re-Finalizes after applyBondDelta adjusts levels.
 	rep.Finalize()
 	return rep
 }
