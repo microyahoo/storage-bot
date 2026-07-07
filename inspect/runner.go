@@ -2,6 +2,7 @@ package inspect
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -69,8 +70,16 @@ func (r *Runner) Run(ctx context.Context, clusterInput string) (*Report, error) 
 	if err != nil {
 		return nil, err
 	}
+
+	// 取上一次报告用于 bond link failure 增量比对（此刻本次尚未 Save）。
+	prev := r.latestReport(name)
+
 	start := time.Now()
 	rep := r.runWith(ctx, name, ke, cfg.GatewayNode, nodes, r.thresholds, start)
+
+	// 增量修正必须在 Finalize（Overall 依赖 level）与 summarize（降级项不喂 LLM）之前。
+	applyBondDelta(rep, prev)
+	rep.Finalize()
 	rep.Duration = time.Since(start)
 
 	if r.llmSummary && r.analyzer != nil {
@@ -82,6 +91,31 @@ func (r *Runner) Run(ctx context.Context, clusterInput string) (*Report, error) 
 		_ = r.store.Save(rep)
 	}
 	return rep, nil
+}
+
+// latestReport loads the most recent stored report for the cluster, or nil when
+// there is no store or no history yet (first run). Used as the bond link-failure
+// delta baseline. A List/Load error is logged and treated as "no baseline" so a
+// corrupt or unreadable store degrades to a one-time baseline warning instead of
+// silently masquerading as a first run.
+func (r *Runner) latestReport(cluster string) *Report {
+	if r.store == nil {
+		return nil
+	}
+	names, err := r.store.List(cluster)
+	if err != nil {
+		slog.Warn("inspect: list history failed, using no baseline", "cluster", cluster, "error", err)
+		return nil
+	}
+	if len(names) == 0 {
+		return nil // no history yet — genuine first run
+	}
+	rep, err := r.store.Load(cluster, names[0])
+	if err != nil {
+		slog.Warn("inspect: load latest report failed, using no baseline", "cluster", cluster, "file", names[0], "error", err)
+		return nil
+	}
+	return rep
 }
 
 // runWith is the testable core: no network resolution, time injected by caller.
@@ -133,6 +167,8 @@ func (r *Runner) runWith(ctx context.Context, name string, ke *executor.KubeExec
 	}
 	wg.Wait()
 
+	// Finalize here so callers using runWith directly (tests) get Overall set;
+	// Run re-Finalizes after applyBondDelta adjusts levels.
 	rep.Finalize()
 	return rep
 }

@@ -108,13 +108,38 @@ func TestParseBond(t *testing.T) {
 	if f := parseBond("(no bonds)"); f.Level != LevelOK {
 		t.Errorf("no bonds → %v, want OK", f.Level)
 	}
+
 	warn := "/proc/net/bonding/bond0:Link Failure Count: 3\n/proc/net/bonding/bond0:MII Status: up\n"
-	if f := parseBond(warn); f.Level != LevelWarn {
+	f := parseBond(warn)
+	if f.Level != LevelWarn {
 		t.Errorf("link failure → %v, want Warn", f.Level)
 	}
-	crit := "/proc/net/bonding/bond0:MII Status: down\n"
-	if f := parseBond(crit); f.Level != LevelCritical {
+	if f.Metrics["link_failure_total"] != "3" {
+		t.Errorf("link_failure_total = %q, want \"3\"", f.Metrics["link_failure_total"])
+	}
+
+	// 多个 bond 求和后写入 total。
+	sum := "/proc/net/bonding/bond0:Link Failure Count: 3\n" +
+		"/proc/net/bonding/bond0:MII Status: up\n" +
+		"/proc/net/bonding/bond1:Link Failure Count: 5\n" +
+		"/proc/net/bonding/bond1:MII Status: up\n"
+	if f := parseBond(sum); f.Level != LevelWarn || f.Metrics["link_failure_total"] != "8" {
+		t.Errorf("summed bond → level %v total %q, want Warn \"8\"", f.Level, f.Metrics["link_failure_total"])
+	}
+
+	// failTotal==0 仍写 total=0，级别 OK。
+	zero := "/proc/net/bonding/bond0:Link Failure Count: 0\n/proc/net/bonding/bond0:MII Status: up\n"
+	if f := parseBond(zero); f.Level != LevelOK || f.Metrics["link_failure_total"] != "0" {
+		t.Errorf("zero failures → level %v total %q, want OK \"0\"", f.Level, f.Metrics["link_failure_total"])
+	}
+
+	crit := "/proc/net/bonding/bond0:Link Failure Count: 3\n/proc/net/bonding/bond0:MII Status: down\n"
+	f = parseBond(crit)
+	if f.Level != LevelCritical {
 		t.Errorf("MII down → %v, want Critical", f.Level)
+	}
+	if f.Metrics["link_failure_total"] != "3" {
+		t.Errorf("critical still records total, got %q", f.Metrics["link_failure_total"])
 	}
 }
 

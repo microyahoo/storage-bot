@@ -221,11 +221,14 @@ func parseBond(raw string) Finding {
 			}
 		}
 	}
+	// 始终落盘累计次数：这是下一次巡检做增量比对的基线来源，必须进报告 JSON。
+	f.Metrics = map[string]string{"link_failure_total": strconv.Itoa(failTotal)}
 	switch {
 	case miiDown:
 		f.Level, f.Summary = LevelCritical, "存在 MII Status 非 up 的 bond"
 		f.Advice = "检查物理链路与交换机端口"
 	case failTotal > 0:
+		// Warn 初值：Runner 的 applyBondDelta 会据上一次报告改写文案或降级为 OK。
 		f.Level, f.Summary = LevelWarn, fmt.Sprintf("bond 累计 Link Failure %d 次", failTotal)
 	default:
 		f.Level, f.Summary = LevelOK, "bond 链路正常"
