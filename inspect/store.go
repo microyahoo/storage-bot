@@ -60,6 +60,26 @@ func (s *Store) List(cluster string) ([]string, error) {
 	return names, nil
 }
 
+// Clusters returns the cluster names that have a history subdirectory, sorted.
+// Used by maintenance tooling that walks every stored report.
+func (s *Store) Clusters() ([]string, error) {
+	entries, err := os.ReadDir(s.dir)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, e := range entries {
+		if e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
 func (s *Store) Load(cluster, name string) (*Report, error) {
 	data, err := os.ReadFile(filepath.Join(s.clusterDir(cluster), name))
 	if err != nil {
@@ -70,6 +90,21 @@ func (s *Store) Load(cluster, name string) (*Report, error) {
 		return nil, fmt.Errorf("unmarshal report: %w", err)
 	}
 	return &r, nil
+}
+
+// RewriteReport overwrites an existing report file in place, without touching
+// sibling files. Unlike Save it does not derive the name from the timestamp and
+// does not prune — so a maintenance walk can rewrite each file it loaded without
+// disturbing the set it is iterating.
+func (s *Store) RewriteReport(cluster, name string, r *Report) error {
+	data, err := json.MarshalIndent(r, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal report: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(s.clusterDir(cluster), name), data, 0o644); err != nil {
+		return fmt.Errorf("write report: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) prune(cluster string) error {
