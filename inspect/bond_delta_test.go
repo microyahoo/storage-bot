@@ -105,3 +105,14 @@ func TestApplyBondDelta_PrevMetricMissing(t *testing.T) {
 		t.Errorf("prev metric missing → level %v summary %q, want Warn + 首次", f.Level, f.Summary)
 	}
 }
+
+func TestApplyBondDelta_CurMetricMissing(t *testing.T) {
+	// 本次 finding 缺 link_failure_total → bondTotal 返回 false → 保底不动，保持 Warn。
+	prev := &Report{Findings: []Finding{bondFinding("n1", 5, LevelWarn)}}
+	rep := &Report{Findings: []Finding{{Item: "hw_bond", Node: "n1", Level: LevelWarn,
+		Summary: "bond 累计 Link Failure N 次", Metrics: map[string]string{}}}}
+	applyBondDelta(rep, prev)
+	if f := findBond(rep, "n1"); f.Level != LevelWarn {
+		t.Errorf("cur metric missing → %v, want Warn (untouched)", f.Level)
+	}
+}
