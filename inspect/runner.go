@@ -71,14 +71,14 @@ func (r *Runner) Run(ctx context.Context, clusterInput string) (*Report, error) 
 		return nil, err
 	}
 
-	// 取上一次报告用于 bond link failure 增量比对（此刻本次尚未 Save）。
-	prev := r.latestReport(name)
+	// 取最近两份报告用于 bond link failure 增量比对（此刻本次尚未 Save）。
+	prev1, prev2 := r.recentReports(name)
 
 	start := time.Now()
 	rep := r.runWith(ctx, name, ke, cfg.GatewayNode, nodes, r.thresholds, start)
 
 	// 增量修正必须在 Finalize（Overall 依赖 level）与 summarize（降级项不喂 LLM）之前。
-	applyBondDelta(rep, prev)
+	applyBondDelta(rep, prev1, prev2)
 	rep.Finalize()
 	rep.Duration = time.Since(start)
 
@@ -93,29 +93,36 @@ func (r *Runner) Run(ctx context.Context, clusterInput string) (*Report, error) 
 	return rep, nil
 }
 
-// latestReport loads the most recent stored report for the cluster, or nil when
-// there is no store or no history yet (first run). Used as the bond link-failure
-// delta baseline. A List/Load error is logged and treated as "no baseline" so a
-// corrupt or unreadable store degrades to a one-time baseline warning instead of
-// silently masquerading as a first run.
-func (r *Runner) latestReport(cluster string) *Report {
+// recentReports loads the two most recent stored reports for the cluster,
+// newest first (prev1 = last run, prev2 = the run before). Either is nil when
+// there aren't that many reports yet, no store is configured, or a file can't be
+// read. A List/Load error is logged and treated as "no baseline" so a corrupt or
+// unreadable store degrades to a one-time baseline warning instead of silently
+// masquerading as a first run. Used by applyBondDelta's two-window comparison.
+func (r *Runner) recentReports(cluster string) (prev1, prev2 *Report) {
 	if r.store == nil {
-		return nil
+		return nil, nil
 	}
 	names, err := r.store.List(cluster)
 	if err != nil {
 		slog.Warn("inspect: list history failed, using no baseline", "cluster", cluster, "error", err)
-		return nil
+		return nil, nil
 	}
-	if len(names) == 0 {
-		return nil // no history yet — genuine first run
+	load := func(name string) *Report {
+		rep, err := r.store.Load(cluster, name)
+		if err != nil {
+			slog.Warn("inspect: load report failed, skipping as baseline", "cluster", cluster, "file", name, "error", err)
+			return nil
+		}
+		return rep
 	}
-	rep, err := r.store.Load(cluster, names[0])
-	if err != nil {
-		slog.Warn("inspect: load latest report failed, using no baseline", "cluster", cluster, "file", names[0], "error", err)
-		return nil
+	if len(names) > 0 {
+		prev1 = load(names[0])
 	}
-	return rep
+	if len(names) > 1 {
+		prev2 = load(names[1])
+	}
+	return prev1, prev2
 }
 
 // runWith is the testable core: no network resolution, time injected by caller.

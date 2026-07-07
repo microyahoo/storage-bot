@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -80,15 +81,18 @@ func TestRunLoadsPrevForBondDelta(t *testing.T) {
 	}}})
 	r := &Runner{registry: reg, store: store}
 
-	prevRep := r.latestReport("c1")
-	if prevRep == nil {
-		t.Fatal("latestReport returned nil, want the saved prev report")
+	prev1, prev2 := r.recentReports("c1")
+	if prev1 == nil {
+		t.Fatal("recentReports prev1 nil, want the saved prev report")
+	}
+	if prev2 != nil {
+		t.Fatal("recentReports prev2 should be nil with only one stored report")
 	}
 
 	now := time.Date(2026, 7, 7, 3, 0, 0, 0, time.UTC)
 	rep := r.runWith(context.Background(), "c1", nil, nil,
 		[]config.SSHNode{{Name: "n1"}}, config.Thresholds{}, now)
-	applyBondDelta(rep, prevRep)
+	applyBondDelta(rep, prev1, prev2)
 	rep.Finalize()
 
 	var got Finding
@@ -166,7 +170,7 @@ func TestRunAppliesBondDeltaEndToEnd(t *testing.T) {
 	}
 }
 
-func TestLatestReportCorruptFile(t *testing.T) {
+func TestRecentReportsCorruptFile(t *testing.T) {
 	dir := t.TempDir()
 	store := NewStore(dir, 30)
 
@@ -180,19 +184,47 @@ func TestLatestReportCorruptFile(t *testing.T) {
 	}
 
 	r := &Runner{store: store}
-	if rep := r.latestReport("c1"); rep != nil {
-		t.Errorf("corrupt latest report → %v, want nil (no baseline)", rep)
+	if p1, p2 := r.recentReports("c1"); p1 != nil || p2 != nil {
+		t.Errorf("corrupt latest report → %v/%v, want nil/nil (no baseline)", p1, p2)
 	}
 }
 
-func TestLatestReportNilStoreAndEmpty(t *testing.T) {
-	// 无 store → nil。
-	if rep := (&Runner{}).latestReport("c1"); rep != nil {
-		t.Errorf("nil store → %v, want nil", rep)
+func TestRecentReportsNilStoreAndEmpty(t *testing.T) {
+	// 无 store → nil, nil。
+	if p1, p2 := (&Runner{}).recentReports("c1"); p1 != nil || p2 != nil {
+		t.Errorf("nil store → %v/%v, want nil/nil", p1, p2)
 	}
-	// 有 store 但无历史 → nil（真正的首次巡检）。
+	// 有 store 但无历史 → nil, nil（真正的首次巡检）。
 	r := &Runner{store: NewStore(t.TempDir(), 30)}
-	if rep := r.latestReport("c1"); rep != nil {
-		t.Errorf("empty history → %v, want nil", rep)
+	if p1, p2 := r.recentReports("c1"); p1 != nil || p2 != nil {
+		t.Errorf("empty history → %v/%v, want nil/nil", p1, p2)
+	}
+}
+
+func TestRecentReportsTwoNewestFirst(t *testing.T) {
+	store := NewStore(t.TempDir(), 30)
+	base := time.Date(2026, 7, 5, 3, 0, 0, 0, time.UTC)
+	for i, total := range []int{5, 8, 11} { // 三次巡检，累计递增
+		rep := &Report{
+			Cluster:   "c1",
+			StartedAt: base.Add(time.Duration(i) * time.Hour),
+			Findings: []Finding{{Item: "hw_bond", Node: "n1", Level: LevelWarn,
+				Metrics: map[string]string{"link_failure_total": strconv.Itoa(total)}}},
+		}
+		if err := store.Save(rep); err != nil {
+			t.Fatalf("save %d: %v", i, err)
+		}
+	}
+	r := &Runner{store: store}
+	p1, p2 := r.recentReports("c1")
+	if p1 == nil || p2 == nil {
+		t.Fatalf("want two reports, got %v/%v", p1, p2)
+	}
+	// prev1 是最新（total=11），prev2 是次新（total=8）。
+	if got := p1.Findings[0].Metrics["link_failure_total"]; got != "11" {
+		t.Errorf("prev1 total = %q, want 11 (newest)", got)
+	}
+	if got := p2.Findings[0].Metrics["link_failure_total"]; got != "8" {
+		t.Errorf("prev2 total = %q, want 8 (second newest)", got)
 	}
 }
