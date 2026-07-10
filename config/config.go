@@ -23,7 +23,6 @@ type InspectConfig struct {
 	Schedule       string     `yaml:"schedule"`
 	Clusters       []string   `yaml:"clusters"`
 	NotifyChat     string     `yaml:"notify_chat"`
-	NotifyMinLevel string     `yaml:"notify_min_level"`
 	LLMSummary     bool       `yaml:"llm_summary"`
 	HistoryDir     string     `yaml:"history_dir"`
 	HistoryKeep    int        `yaml:"history_keep"`
@@ -233,9 +232,6 @@ func applyInspectDefaults(c *InspectConfig) {
 	if t.LoadWarnRatio == 0 {
 		t.LoadWarnRatio = 2.0
 	}
-	if c.NotifyMinLevel == "" {
-		c.NotifyMinLevel = "warn"
-	}
 	if c.HistoryDir == "" {
 		c.HistoryDir = "./inspect-reports"
 	}
@@ -250,11 +246,6 @@ func validateInspect(c *InspectConfig) error {
 	}
 	if _, err := cron.ParseStandard(c.Schedule); err != nil {
 		return fmt.Errorf("inspect.schedule invalid cron %q: %w", c.Schedule, err)
-	}
-	switch c.NotifyMinLevel {
-	case "warn", "critical":
-	default:
-		return fmt.Errorf("inspect.notify_min_level must be warn or critical, got %q", c.NotifyMinLevel)
 	}
 	return nil
 }

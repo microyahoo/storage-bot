@@ -830,6 +830,30 @@ func (h *Handler) NotifyReport(ctx context.Context, chatID string, rep *inspect.
 	return nil
 }
 
+// NotifySummary sends a batch summary card to a specific chat.
+func (h *Handler) NotifySummary(ctx context.Context, chatID string, summary *inspect.Summary) error {
+	content, err := summary.RenderCard(h.webBase).JSON()
+	if err != nil {
+		return fmt.Errorf("build inspect summary card: %w", err)
+	}
+	resp, err := h.feishuClient.Im.Message.Create(ctx,
+		larkim.NewCreateMessageReqBuilder().
+			ReceiveIdType("chat_id").
+			Body(larkim.NewCreateMessageReqBodyBuilder().
+				ReceiveId(chatID).
+				MsgType("interactive").
+				Content(content).
+				Build()).
+			Build())
+	if err != nil {
+		return fmt.Errorf("send inspect summary card: %w", err)
+	}
+	if !resp.Success() {
+		return fmt.Errorf("send inspect summary card failed: code=%d, msg=%s", resp.Code, resp.Msg)
+	}
+	return nil
+}
+
 func (h *Handler) replyCard(ctx context.Context, messageID string, c *card.Card) error {
 	content, err := c.JSON()
 	if err != nil {

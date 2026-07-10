@@ -43,9 +43,6 @@ inspect:
 	if cfg.Inspect.Thresholds.LoadWarnRatio != 2.0 {
 		t.Errorf("LoadWarnRatio default = %v, want 2.0", cfg.Inspect.Thresholds.LoadWarnRatio)
 	}
-	if cfg.Inspect.NotifyMinLevel != "warn" {
-		t.Errorf("NotifyMinLevel default = %q, want warn", cfg.Inspect.NotifyMinLevel)
-	}
 	if cfg.Inspect.HistoryKeep != 30 {
 		t.Errorf("HistoryKeep default = %d, want 30", cfg.Inspect.HistoryKeep)
 	}
@@ -62,14 +59,3 @@ inspect:
 	}
 }
 
-func TestInspectBadNotifyLevel(t *testing.T) {
-	_, err := Load(writeTmpConfig(t, baseCfg+`
-inspect:
-  enabled: true
-  schedule: "0 3 * * *"
-  notify_min_level: panic
-`))
-	if err == nil {
-		t.Fatal("expected error for invalid notify_min_level")
-	}
-}
