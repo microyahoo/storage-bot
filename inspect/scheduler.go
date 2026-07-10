@@ -3,7 +3,9 @@ package inspect
 import (
 	"context"
 	"log/slog"
+	"sort"
 	"sync"
+	"time"
 
 	"github.com/microyahoo/storage-bot/config"
 	"github.com/robfig/cron/v3"
@@ -13,6 +15,7 @@ import (
 // be empty if the scheduler is configured without a notify target.
 type Notifier interface {
 	NotifyReport(ctx context.Context, chatID string, rep *Report) error
+	NotifySummary(ctx context.Context, chatID string, summary *Summary) error
 }
 
 // ClusterLister is the slice of cluster.Manager the scheduler needs to expand
@@ -35,15 +38,6 @@ type Scheduler struct {
 
 func NewScheduler(runner *Runner, cfg config.InspectConfig, lister ClusterLister, notifier Notifier, webBase string) *Scheduler {
 	return &Scheduler{runner: runner, cfg: cfg, lister: lister, notifier: notifier, webBase: webBase}
-}
-
-func shouldNotify(overall Level, minLevel string) bool {
-	switch minLevel {
-	case "critical":
-		return overall == LevelCritical
-	default: // "warn"
-		return overall == LevelWarn || overall == LevelCritical
-	}
 }
 
 func targetClusters(configured, all []string) []string {
@@ -92,19 +86,58 @@ func (s *Scheduler) install(cfg config.InspectConfig) {
 	slog.Info("inspect scheduler installed", "schedule", cfg.Schedule)
 }
 
-// tick runs inspection for all target clusters, one report (and one card) each.
+// tick runs inspection for all target clusters, sends individual cards for
+// abnormal ones, and a single summary card for the batch.
 func (s *Scheduler) tick(ctx context.Context) {
 	clusters := targetClusters(s.cfg.Clusters, s.lister.List())
+	start := time.Now()
+
+	var okNames, failedNames []string
+	warnCount, critCount := 0, 0
+
 	for _, name := range clusters {
 		rep, err := s.runner.Run(ctx, name)
 		if err != nil {
 			slog.Error("inspect run failed", "cluster", name, "error", err)
+			failedNames = append(failedNames, name)
 			continue
 		}
-		if s.notifier != nil && s.cfg.NotifyChat != "" && shouldNotify(rep.Overall, s.cfg.NotifyMinLevel) {
-			if err := s.notifier.NotifyReport(ctx, s.cfg.NotifyChat, rep); err != nil {
-				slog.Error("inspect notify failed", "cluster", name, "chat_id", s.cfg.NotifyChat, "error", err)
-			}
+		switch rep.Overall {
+		case LevelWarn:
+			warnCount++
+			s.notify(ctx, rep)
+		case LevelCritical:
+			critCount++
+			s.notify(ctx, rep)
+		default:
+			okNames = append(okNames, name)
+		}
+	}
+
+	sort.Strings(okNames)
+	sort.Strings(failedNames)
+	summary := &Summary{
+		Total:       len(clusters),
+		OK:          len(okNames),
+		Warn:        warnCount,
+		Critical:    critCount,
+		Failed:      len(failedNames),
+		OKNames:     okNames,
+		FailedNames: failedNames,
+		StartedAt:   start,
+		Duration:    time.Since(start),
+	}
+	if s.notifier != nil && s.cfg.NotifyChat != "" {
+		if err := s.notifier.NotifySummary(ctx, s.cfg.NotifyChat, summary); err != nil {
+			slog.Error("inspect summary notify failed", "chat_id", s.cfg.NotifyChat, "error", err)
+		}
+	}
+}
+
+func (s *Scheduler) notify(ctx context.Context, rep *Report) {
+	if s.notifier != nil && s.cfg.NotifyChat != "" {
+		if err := s.notifier.NotifyReport(ctx, s.cfg.NotifyChat, rep); err != nil {
+			slog.Error("inspect notify failed", "cluster", rep.Cluster, "chat_id", s.cfg.NotifyChat, "error", err)
 		}
 	}
 }
