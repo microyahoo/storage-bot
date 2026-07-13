@@ -913,3 +913,38 @@ func restartCephDaemon(sc *Context, daemon string) (string, error) {
 	return fmt.Sprintf("✅ 已删除 pod `%s`（%s.%s @ %s），rook 正在重建中。\n用 `mon status` / `ceph -s` 确认恢复。",
 		target.Name, daemon, id, target.Node), nil
 }
+
+type ObjectStorage struct{}
+
+func (s *ObjectStorage) Name() string { return "object_storage" }
+func (s *ObjectStorage) Description() string {
+	return "调用 smdctl 查询对象存储用户和桶列表"
+}
+func (s *ObjectStorage) Execute(sc *Context) (string, error) {
+	if sc.Gateway == nil {
+		return "🚫 该集群未配置网关节点，无法执行", nil
+	}
+	gw := config.SSHNode{Name: sc.Gateway.Name, Host: sc.Gateway.Host, User: sc.Gateway.User, KeyFile: sc.Gateway.KeyFile}
+
+	_, err := sc.RunOnNode(gw, "which smdctl")
+	if err != nil {
+		return "🚫 该集群不支持对象存储查询（网关节点未安装 smdctl）", nil
+	}
+
+	var results []string
+	userOut, err := sc.RunOnNode(gw, "smdctl os-user ls")
+	if err != nil {
+		results = append(results, fmt.Sprintf("📡 `smdctl os-user ls` ❌\n```\n%v\n```", err))
+	} else {
+		results = append(results, fmt.Sprintf("📡 `smdctl os-user ls`\n```\n%s\n```", strings.TrimRight(userOut, "\n")))
+	}
+
+	bucketOut, err := sc.RunOnNode(gw, "smdctl os-bucket ls")
+	if err != nil {
+		results = append(results, fmt.Sprintf("📡 `smdctl os-bucket ls` ❌\n```\n%v\n```", err))
+	} else {
+		results = append(results, fmt.Sprintf("📡 `smdctl os-bucket ls`\n```\n%s\n```", strings.TrimRight(bucketOut, "\n")))
+	}
+
+	return strings.Join(results, "\n\n"), nil
+}

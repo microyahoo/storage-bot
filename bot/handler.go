@@ -471,7 +471,7 @@ func (h *Handler) listSkills() string {
 	sb.WriteString("@bot osd cluster-01                              # osd_status\n")
 	sb.WriteString("@bot pg cluster-01                               # pg_status\n")
 	sb.WriteString("@bot pool cluster-01                             # pool_status\n")
-	sb.WriteString("@bot 容量 cluster-01                             # capacity\n")
+	sb.WriteString("@bot capacity cluster-01                         # capacity\n")
 	sb.WriteString("@bot slow cluster-01                             # slow_ops\n")
 	sb.WriteString("@bot crash cluster-01                            # crash\n")
 	sb.WriteString("@bot crash info cluster-01                       # crash_info\n")
@@ -490,8 +490,9 @@ func (h *Handler) listSkills() string {
 	sb.WriteString("@bot set noout cluster-01                        # set_noout\n")
 	sb.WriteString("@bot unset noout cluster-01                      # unset_noout\n")
 	sb.WriteString("@bot optimize rgw cluster-01 max=100             # optimize_rgw_pg\n")
-	sb.WriteString("@bot 重启 mon a cluster-01 --yes                  # restart_mon\n")
+	sb.WriteString("@bot restart mon a cluster-01 --yes              # restart_mon\n")
 	sb.WriteString("@bot restart mgr b cluster-01 --yes              # restart_mgr\n")
+	sb.WriteString("@bot object storage cluster-01                   # object_storage\n")
 	sb.WriteString("```")
 	return sb.String()
 }
@@ -704,6 +705,7 @@ var noAnalysisSkills = map[string]bool{
 	"nic_up":            true,
 	"restart_mon":       true,
 	"restart_mgr":       true,
+	"object_storage":    true,
 }
 
 func needsAnalysis(skillName string) bool {

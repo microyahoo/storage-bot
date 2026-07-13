@@ -160,6 +160,7 @@ func ParseWithAll(message string, knownClusters []string, knownSkills []string, 
 		{"bond_status", []string{"bond_status", "bond status", "bond", "网卡聚合", "链路聚合", "link failure"}},
 		{"nic_info", []string{"nic_info", "nic info", "nic", "ip link", "网卡", "网卡信息", "网口"}},
 		{"optimize_rgw_pg", []string{"optimize rgw", "rgw pg", "rgw pg优化", "upmap rgw", "优化rgw pg", "优化rgw存储池"}},
+		{"object_storage", []string{"object_storage", "object storage", "对象存储"}},
 	}
 	for _, entry := range skillAliasTable {
 		for _, alias := range entry.aliases {
