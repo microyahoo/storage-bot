@@ -948,3 +948,300 @@ func (s *ObjectStorage) Execute(sc *Context) (string, error) {
 
 	return strings.Join(results, "\n\n"), nil
 }
+
+// HWInfo collects, per node: the server vendor/serial (dmidecode -t1) and, for
+// every bond slave NIC, its driver / version / firmware-version (ethtool -i).
+// Results are rendered as a per-cluster table keyed by node IP. Read-only.
+type HWInfo struct{}
+
+func (s *HWInfo) Name() string { return "hw_info" }
+func (s *HWInfo) Description() string {
+	return "查询节点供应商/序列号及 bond 网卡驱动/version/firmware，整理成表格"
+}
+
+// hwRow is one (node, bond slave NIC) tuple. Vendor/serial repeat across the
+// rows of a node that has more than one bond slave.
+type hwRow struct {
+	nodeName string
+	nodeIP   string
+	vendor   string
+	serial   string
+	bond     string
+	nic      string
+	driver   string
+	version  string
+	firmware string
+}
+
+func (s *HWInfo) Execute(sc *Context) (string, error) {
+	nodes, err := resolveNodes(sc.Nodes, sc.NodeName)
+	if err != nil {
+		return err.Error(), nil
+	}
+
+	var rows []hwRow
+	var errs []string
+	for _, node := range nodes {
+		sshNode := config.SSHNode{Name: node.Name, Host: node.Host, User: node.User, KeyFile: node.KeyFile}
+		ip := hostIPOnly(node.Host)
+
+		// 1) vendor + serial. parts[0]="dmidecode" (safe-listed); the pipe filters
+		// to the two fields we care about.
+		vendor, serial := "-", "-"
+		dmiOut, err := sc.RunOnNode(sshNode, "dmidecode -t1 | grep -E 'Manufacturer|Serial Number'")
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("📌 **%s** dmidecode ❌ `%v`", node.Name, err))
+		} else {
+			vendor, serial = parseDMIVendorSerial(dmiOut)
+		}
+
+		// 2) bond slave NIC names. parts[0]="grep" (safe-listed).
+		bondCmd := "grep -H -E '^(Slave Interface)' /proc/net/bonding/bond* 2>/dev/null || echo '(no bonds configured)'"
+		bondOut, err := sc.RunOnNode(sshNode, bondCmd)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("📌 **%s** 读取 bond 失败 ❌ `%v`", node.Name, err))
+			rows = append(rows, hwRow{nodeName: node.Name, nodeIP: ip, vendor: vendor, serial: serial, bond: "-", nic: "-", driver: "-", version: "-", firmware: "-"})
+			continue
+		}
+
+		slaves := bondSlaveNICs(bondOut)
+		if len(slaves) == 0 {
+			rows = append(rows, hwRow{nodeName: node.Name, nodeIP: ip, vendor: vendor, serial: serial, bond: "(no bond)", nic: "-", driver: "-", version: "-", firmware: "-"})
+			continue
+		}
+
+		// 3) per-slave driver/version/firmware via ethtool -i <nic>.
+		for _, sl := range slaves {
+			row := hwRow{nodeName: node.Name, nodeIP: ip, vendor: vendor, serial: serial, bond: sl.bond, nic: sl.nic, driver: "-", version: "-", firmware: "-"}
+			// Defensive recheck: nic comes from remote output; never splice an
+			// unexpected token into the ethtool command.
+			if !ethNameRe.MatchString(sl.nic) {
+				errs = append(errs, fmt.Sprintf("📌 **%s** 网口名非法：%q", node.Name, sl.nic))
+				rows = append(rows, row)
+				continue
+			}
+			ethOut, err := sc.RunOnNode(sshNode, fmt.Sprintf("ethtool -i %s", sl.nic))
+			if err != nil {
+				errs = append(errs, fmt.Sprintf("📌 **%s** ethtool -i %s ❌ `%v`", node.Name, sl.nic, err))
+				rows = append(rows, row)
+				continue
+			}
+			row.driver, row.version, row.firmware = parseEthtoolDriver(ethOut)
+			rows = append(rows, row)
+		}
+	}
+
+	// Check if CSV format is requested
+	csvFormat := sc.Args["csv"] == "true"
+	var formattedOutput string
+	if csvFormat {
+		formattedOutput = formatHWTableCSV(rows)
+	} else {
+		formattedOutput = formatHWTable(rows)
+	}
+
+	out := fmt.Sprintf("🖥 集群 **`%s`** · 节点硬件与 bond 网卡信息\n%s", sc.ClusterName, formattedOutput)
+	if len(errs) > 0 {
+		out += "\n\n" + strings.Join(errs, "\n")
+	}
+	return out, nil
+}
+
+// hostIPOnly strips a trailing :port from host, leaving the bare IP/hostname.
+func hostIPOnly(host string) string {
+	if i := strings.LastIndex(host, ":"); i >= 0 {
+		return host[:i]
+	}
+	return host
+}
+
+// parseDMIVendorSerial extracts Manufacturer and Serial Number from the grepped
+// `dmidecode -t1` output. Missing fields come back as "-".
+func parseDMIVendorSerial(raw string) (vendor, serial string) {
+	vendor, serial = "-", "-"
+	for _, line := range strings.Split(raw, "\n") {
+		key, val, found := strings.Cut(line, ":")
+		if !found {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		val = strings.TrimSpace(val)
+		switch key {
+		case "Manufacturer":
+			if val != "" {
+				vendor = val
+			}
+		case "Serial Number":
+			if val != "" {
+				serial = val
+			}
+		}
+	}
+	return vendor, serial
+}
+
+// bondNIC pairs a bond name with one of its slave interfaces.
+type bondNIC struct {
+	bond string
+	nic  string
+}
+
+// bondSlaveNICs extracts (bond, nic) pairs from parseBonds output.
+func bondSlaveNICs(raw string) []bondNIC {
+	bonds := parseBonds(raw)
+	var out []bondNIC
+	for _, b := range bonds {
+		for _, sl := range b.slaves {
+			out = append(out, bondNIC{bond: b.name, nic: sl.name})
+		}
+	}
+	return out
+}
+
+// parseEthtoolDriver extracts driver / version / firmware-version from
+// `ethtool -i <nic>` output. Missing fields come back as "-".
+func parseEthtoolDriver(raw string) (driver, version, firmware string) {
+	driver, version, firmware = "-", "-", "-"
+	for _, line := range strings.Split(raw, "\n") {
+		key, val, found := strings.Cut(line, ":")
+		if !found {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		val = strings.TrimSpace(val)
+		switch key {
+		case "driver":
+			if val != "" {
+				driver = val
+			}
+		case "version":
+			if val != "" {
+				version = val
+			}
+		case "firmware-version":
+			if val != "" {
+				firmware = val
+			}
+		}
+	}
+	return driver, version, firmware
+}
+
+// formatHWTable renders hwRows as a fixed-width, column-aligned table inside a
+// code fence so it displays consistently across Feishu/markdown renderers.
+func formatHWTable(rows []hwRow) string {
+	if len(rows) == 0 {
+		return "```\n(无数据)\n```"
+	}
+
+	headers := []string{"节点名", "节点IP", "供应商", "序列号", "Bond", "网卡", "驱动", "version", "firmware"}
+	table := make([][]string, 0, len(rows)+1)
+	table = append(table, headers)
+	for _, r := range rows {
+		table = append(table, []string{r.nodeName, r.nodeIP, r.vendor, r.serial, r.bond, r.nic, r.driver, r.version, r.firmware})
+	}
+
+	// Column widths measured in display cells (CJK counts as 2).
+	widths := make([]int, len(headers))
+	for _, row := range table {
+		for i, cell := range row {
+			if w := displayWidth(cell); w > widths[i] {
+				widths[i] = w
+			}
+		}
+	}
+
+	var sb strings.Builder
+	sb.WriteString("```\n")
+	for ri, row := range table {
+		for i, cell := range row {
+			sb.WriteString(cell)
+			sb.WriteString(strings.Repeat(" ", widths[i]-displayWidth(cell)))
+			if i < len(row)-1 {
+				sb.WriteString("  ")
+			}
+		}
+		sb.WriteString("\n")
+		if ri == 0 {
+			// underline the header row
+			for i := range row {
+				sb.WriteString(strings.Repeat("-", widths[i]))
+				if i < len(row)-1 {
+					sb.WriteString("  ")
+				}
+			}
+			sb.WriteString("\n")
+		}
+	}
+	sb.WriteString("```")
+	return sb.String()
+}
+
+// formatHWTableCSV renders hwRows as CSV (comma-separated values) inside a code
+// fence. Fields containing commas or quotes are properly escaped.
+func formatHWTableCSV(rows []hwRow) string {
+	if len(rows) == 0 {
+		return "```csv\n(无数据)\n```"
+	}
+
+	var sb strings.Builder
+	sb.WriteString("```csv\n")
+
+	// Header row
+	sb.WriteString("节点名,节点IP,供应商,序列号,Bond,网卡,驱动,version,firmware\n")
+
+	// Data rows
+	for _, r := range rows {
+		sb.WriteString(escapeCSV(r.nodeName))
+		sb.WriteString(",")
+		sb.WriteString(escapeCSV(r.nodeIP))
+		sb.WriteString(",")
+		sb.WriteString(escapeCSV(r.vendor))
+		sb.WriteString(",")
+		sb.WriteString(escapeCSV(r.serial))
+		sb.WriteString(",")
+		sb.WriteString(escapeCSV(r.bond))
+		sb.WriteString(",")
+		sb.WriteString(escapeCSV(r.nic))
+		sb.WriteString(",")
+		sb.WriteString(escapeCSV(r.driver))
+		sb.WriteString(",")
+		sb.WriteString(escapeCSV(r.version))
+		sb.WriteString(",")
+		sb.WriteString(escapeCSV(r.firmware))
+		sb.WriteString("\n")
+	}
+
+	sb.WriteString("```")
+	return sb.String()
+}
+
+// escapeCSV escapes a CSV field. If the field contains comma, quote, or newline,
+// wrap it in quotes and escape internal quotes by doubling them.
+func escapeCSV(s string) string {
+	if strings.ContainsAny(s, ",\"\n") {
+		return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
+	}
+	return s
+}
+
+// displayWidth returns the terminal display width of s, counting wide (CJK)
+// runes as 2 columns so mixed Chinese/ASCII headers still align.
+func displayWidth(s string) int {
+	w := 0
+	for _, r := range s {
+		if r >= 0x1100 &&
+			(r <= 0x115F || // Hangul Jamo
+				(r >= 0x2E80 && r <= 0xA4CF) || // CJK, Kangxi, etc.
+				(r >= 0xAC00 && r <= 0xD7A3) || // Hangul syllables
+				(r >= 0xF900 && r <= 0xFAFF) || // CJK compatibility
+				(r >= 0xFE30 && r <= 0xFE4F) || // CJK compat forms
+				(r >= 0xFF00 && r <= 0xFF60) || // fullwidth forms
+				(r >= 0xFFE0 && r <= 0xFFE6)) {
+			w += 2
+		} else {
+			w++
+		}
+	}
+	return w
+}

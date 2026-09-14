@@ -154,6 +154,7 @@ func ValidateSSHCommand(cmd string) error {
 				"find": true, "ls": true, "stat": true,
 				"smartctl": true, "lsblk": true, "blkid": true,
 				"lspci": true, "readlink": true,
+				"dmidecode": true, "ethtool": true,
 				"top": true, "vmstat": true, "mpstat": true,
 				"nproc": true, "lscpu": true,
 				"echo": true, "awk": true, "sed": true, "sort": true,
