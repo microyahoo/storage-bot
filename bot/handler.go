@@ -376,6 +376,8 @@ func (h *Handler) helpMessage() string {
 		"  - 指定关键字：`kernel cdn bd-cdn-node02 keyword=link`\n" +
 		"- 网卡列表（ip link）：`nic cdn bd-cdn-node02` / `网卡 cdn bd-cdn-node02`\n" +
 		"- Bond 状态（汇总每个 slave 的 Link Failure Count，非零标 ⚠）：`bond cdn bd-cdn-node02`\n" +
+		"- 硬件信息（供应商/序列号 + bond 网卡驱动/version/firmware，表格）：`硬件信息 cdn` / `hw info cdn bd-cdn-node02`\n" +
+		"  - CSV 格式输出：`hw info cdn --csv` / `硬件信息 cdn csv`\n" +
 		"- ⬇️ Down 单个网口（删 link，写操作需 `--yes`；前置校验 bond 内两口均 up，避免双口断网）\n" +
 		"  - 预览：`nic down cdn bd-cdn-node02 eth0`（显示将 down 的口，不执行）\n" +
 		"  - 执行：`nic down cdn bd-cdn-node02 eth0 --yes`\n" +
@@ -471,7 +473,7 @@ func (h *Handler) listSkills() string {
 	sb.WriteString("@bot osd cluster-01                              # osd_status\n")
 	sb.WriteString("@bot pg cluster-01                               # pg_status\n")
 	sb.WriteString("@bot pool cluster-01                             # pool_status\n")
-	sb.WriteString("@bot 容量 cluster-01                             # capacity\n")
+	sb.WriteString("@bot capacity cluster-01                         # capacity\n")
 	sb.WriteString("@bot slow cluster-01                             # slow_ops\n")
 	sb.WriteString("@bot crash cluster-01                            # crash\n")
 	sb.WriteString("@bot crash info cluster-01                       # crash_info\n")
@@ -490,8 +492,11 @@ func (h *Handler) listSkills() string {
 	sb.WriteString("@bot set noout cluster-01                        # set_noout\n")
 	sb.WriteString("@bot unset noout cluster-01                      # unset_noout\n")
 	sb.WriteString("@bot optimize rgw cluster-01 max=100             # optimize_rgw_pg\n")
-	sb.WriteString("@bot 重启 mon a cluster-01 --yes                  # restart_mon\n")
+	sb.WriteString("@bot restart mon a cluster-01 --yes              # restart_mon\n")
 	sb.WriteString("@bot restart mgr b cluster-01 --yes              # restart_mgr\n")
+	sb.WriteString("@bot object storage cluster-01                   # object_storage\n")
+	sb.WriteString("@bot hw info cdn bd-cdn-node02                   # hw_info\n")
+	sb.WriteString("@bot hw info cdn --csv                           # hw_info (CSV format)\n")
 	sb.WriteString("```")
 	return sb.String()
 }
@@ -704,6 +709,8 @@ var noAnalysisSkills = map[string]bool{
 	"nic_up":            true,
 	"restart_mon":       true,
 	"restart_mgr":       true,
+	"object_storage":    true,
+	"hw_info":           true,
 }
 
 func needsAnalysis(skillName string) bool {

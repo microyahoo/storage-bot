@@ -152,6 +152,9 @@ func ParseWithAll(message string, knownClusters []string, knownSkills []string, 
 		{"mon_status", []string{"仲裁", "monitor", "mon"}},
 		{"io_stat", []string{"磁盘io", "iostat", "io"}},
 		{"kernel_logs", []string{"kernel_logs", "kernel logs", "kernel日志", "kern日志", "内核日志", "kernel"}},
+		// hw_info before nic_*/bond_status: "网卡驱动"/"硬件信息" carry distinctive
+		// tokens that must not be swallowed by the coarser "nic"/"网卡"/"bond".
+		{"hw_info", []string{"hw_info", "hw info", "hardware info", "硬件信息", "硬件", "供应商", "序列号", "网卡驱动", "firmware", "固件"}},
 		// nic_down before bond_status/nic_info: "nic down"/"网口down"/"ip link set"
 		// all contain the coarser "nic"/"网口"/"ip link" aliases below.
 		{"nic_down", []string{"nic_down", "nic down", "网口down", "网口 down", "down网口", "down 网口", "ip link set", "link down", "网口下线", "禁用网口", "关闭网口"}},
@@ -160,6 +163,7 @@ func ParseWithAll(message string, knownClusters []string, knownSkills []string, 
 		{"bond_status", []string{"bond_status", "bond status", "bond", "网卡聚合", "链路聚合", "link failure"}},
 		{"nic_info", []string{"nic_info", "nic info", "nic", "ip link", "网卡", "网卡信息", "网口"}},
 		{"optimize_rgw_pg", []string{"optimize rgw", "rgw pg", "rgw pg优化", "upmap rgw", "优化rgw pg", "优化rgw存储池"}},
+		{"object_storage", []string{"object_storage", "object storage", "对象存储"}},
 	}
 	for _, entry := range skillAliasTable {
 		for _, alias := range entry.aliases {
@@ -237,6 +241,14 @@ func ParseWithAll(message string, knownClusters []string, knownSkills []string, 
 					}
 					if eth := extractEthName(lower, action.ClusterName, action.NodeName); eth != "" {
 						action.Args["eth"] = eth
+					}
+				}
+				if entry.skill == "hw_info" {
+					if action.Args == nil {
+						action.Args = map[string]string{}
+					}
+					if strings.Contains(lower, "--csv") || strings.Contains(lower, "csv") {
+						action.Args["csv"] = "true"
 					}
 				}
 				return action
@@ -459,19 +471,59 @@ func extractClusterTarget(lower string, knownClusters []string) (clusterName str
 
 // extractNodeName picks out a candidate node token from the message.
 // It splits on whitespace and returns the first token that is not a known
-// cluster name and contains a hyphen or underscore (typical hostname shape).
-// The caller (skill execution) does the authoritative match against the real
-// node list and reports available nodes if the token matches nothing.
+// cluster name and either contains a hyphen/underscore (typical hostname shape)
+// OR is alphanumeric-only and contains at least one digit (e.g. "node01" for
+// fuzzy matching "bd-node01"). Excludes common non-hostname tokens like network
+// interface names (eth*, ens*, bond*) and command flags (--*). The caller (skill
+// execution) does the authoritative match against the real node list and reports
+// available nodes if the token matches nothing.
 func extractNodeName(lower string, knownClusters []string) string {
 	excluded := make(map[string]bool, len(knownClusters))
 	for _, c := range knownClusters {
 		excluded[strings.ToLower(c)] = true
 	}
+	// Common non-hostname patterns to skip
+	skipPrefixes := []string{"eth", "ens", "bond", "lo", "wlan"}
+
 	for _, tok := range strings.Fields(lower) {
 		if excluded[tok] {
 			continue
 		}
+		// Skip command flags (--csv, --yes, etc.)
+		if strings.HasPrefix(tok, "--") {
+			continue
+		}
+		// Skip tokens that look like network interfaces
+		isNIC := false
+		for _, prefix := range skipPrefixes {
+			if strings.HasPrefix(tok, prefix) {
+				isNIC = true
+				break
+			}
+		}
+		if isNIC {
+			continue
+		}
+
+		// Traditional hostname pattern: contains - or _
 		if strings.Contains(tok, "-") || strings.Contains(tok, "_") {
+			return tok
+		}
+		// Fuzzy-match pattern: alphanumeric with at least one digit (node01, server2, etc.)
+		hasLetter := false
+		hasDigit := false
+		allAlnum := true
+		for _, r := range tok {
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+				hasLetter = true
+			} else if r >= '0' && r <= '9' {
+				hasDigit = true
+			} else {
+				allAlnum = false
+				break
+			}
+		}
+		if allAlnum && hasLetter && hasDigit {
 			return tok
 		}
 	}

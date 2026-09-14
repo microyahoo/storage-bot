@@ -70,6 +70,8 @@ func NewRegistry() *Registry {
 	r.Register(&OptimizeRGWBucketsPG{})
 	r.Register(&RestartMon{})
 	r.Register(&RestartMgr{})
+	r.Register(&ObjectStorage{})
+	r.Register(&HWInfo{})
 	return r
 }
 
