@@ -109,6 +109,10 @@ func (s *Scheduler) tick(ctx context.Context) {
 		case LevelCritical:
 			critCount++
 			s.notify(ctx, rep)
+		case LevelUnknown:
+			// Treat inspection failures (unreachable clusters, timeout) as failed rather than OK.
+			failedNames = append(failedNames, name)
+			s.notify(ctx, rep)
 		default:
 			okNames = append(okNames, name)
 		}

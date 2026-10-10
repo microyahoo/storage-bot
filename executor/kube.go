@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/microyahoo/storage-bot/security"
 
@@ -18,6 +19,12 @@ import (
 	"k8s.io/client-go/tools/remotecommand"
 )
 
+const (
+	// DefaultKubeAPITimeout is the timeout for k8s API operations like listing pods/nodes.
+	// Prevents hanging indefinitely when clusters are unreachable.
+	DefaultKubeAPITimeout = 30 * time.Second
+)
+
 type KubeExecutor struct {
 	restConfig *rest.Config
 	clientset  *kubernetes.Clientset
@@ -27,6 +34,7 @@ type KubeExecutor struct {
 	// build-time options consumed by NewKubeExecutor
 	serverOverride        string
 	insecureSkipTLSVerify bool
+	apiTimeout            time.Duration // timeout for k8s API calls, 0 = use DefaultKubeAPITimeout
 }
 
 type KubeOption func(*KubeExecutor)
@@ -45,6 +53,18 @@ func WithServerOverride(server string) KubeOption {
 
 func WithInsecureSkipTLSVerify(skip bool) KubeOption {
 	return func(k *KubeExecutor) { k.insecureSkipTLSVerify = skip }
+}
+
+func WithAPITimeout(timeout time.Duration) KubeOption {
+	return func(k *KubeExecutor) { k.apiTimeout = timeout }
+}
+
+// apiTimeoutOr returns the configured API timeout or the default if not set.
+func (k *KubeExecutor) apiTimeoutOr() time.Duration {
+	if k.apiTimeout > 0 {
+		return k.apiTimeout
+	}
+	return DefaultKubeAPITimeout
 }
 
 func NewKubeExecutor(kubeconfigPath string, opts ...KubeOption) (*KubeExecutor, error) {
@@ -67,6 +87,9 @@ func NewKubeExecutor(kubeconfigPath string, opts ...KubeOption) (*KubeExecutor, 
 		restConfig.TLSClientConfig.CAFile = ""
 	}
 
+	// Set reasonable timeouts to fail fast on unreachable clusters instead of hanging.
+	restConfig.Timeout = k.apiTimeoutOr()
+
 	clientset, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {
 		return nil, fmt.Errorf("create k8s client: %w", err)
@@ -78,6 +101,11 @@ func NewKubeExecutor(kubeconfigPath string, opts ...KubeOption) (*KubeExecutor, 
 }
 
 func (k *KubeExecutor) findToolboxPod(ctx context.Context) (string, error) {
+	// Wrap with timeout to fail fast on unreachable clusters.
+	// Parent context may have a longer deadline (e.g., 2min handler timeout).
+	ctx, cancel := context.WithTimeout(ctx, k.apiTimeoutOr())
+	defer cancel()
+
 	if k.toolboxPod != "" {
 		pod, err := k.clientset.CoreV1().Pods(k.namespace).Get(ctx, k.toolboxPod, metav1.GetOptions{})
 		if err == nil && pod.Status.Phase == corev1.PodRunning {
@@ -164,6 +192,14 @@ func (k *KubeExecutor) RunCephCommand(ctx context.Context, args ...string) (stri
 }
 
 func (k *KubeExecutor) CephHealth(ctx context.Context) (string, error) {
+	// Discover toolbox pod once upfront. If unreachable, fail fast instead of
+	// attempting discovery 4 times (one per ceph command), which would timeout
+	// multiple times and consume the entire handler deadline.
+	_, err := k.findToolboxPod(ctx)
+	if err != nil {
+		return "", fmt.Errorf("discover ceph toolbox pod: %w", err)
+	}
+
 	commands := [][]string{
 		{"status"},
 		{"health", "detail"},
@@ -186,6 +222,10 @@ func (k *KubeExecutor) CephHealth(ctx context.Context) (string, error) {
 
 // DiscoverNodes returns the internal IP and name of all Ready nodes in the cluster.
 func (k *KubeExecutor) DiscoverNodes(ctx context.Context) ([]NodeInfo, error) {
+	// Wrap with timeout to fail fast on unreachable clusters.
+	ctx, cancel := context.WithTimeout(ctx, k.apiTimeoutOr())
+	defer cancel()
+
 	nodes, err := k.clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("list nodes: %w", err)
@@ -248,9 +288,9 @@ func (k *KubeExecutor) execInPod(ctx context.Context, podName string, command []
 	})
 	if err != nil {
 		if stderr.Len() > 0 {
-			return "", fmt.Errorf("exec failed: %w, stderr: %s", err, stderr.String())
+			return "", fmt.Errorf("exec %v failed on %s: %w, stderr: %s", command, podName, err, stderr.String())
 		}
-		return "", fmt.Errorf("exec failed: %w", err)
+		return "", fmt.Errorf("exec %v failed on %s: %w", command, podName, err)
 	}
 
 	output := stdout.String()
@@ -272,6 +312,10 @@ type CephPod struct {
 // rook label app=rook-ceph-<daemon> and reads the per-daemon id from the
 // ceph_daemon_id / mon / mgr labels (rook sets app + a daemon-id label).
 func (k *KubeExecutor) ListCephPods(ctx context.Context, daemon string) ([]CephPod, error) {
+	// Wrap with timeout to fail fast on unreachable clusters.
+	ctx, cancel := context.WithTimeout(ctx, k.apiTimeoutOr())
+	defer cancel()
+
 	pods, err := k.clientset.CoreV1().Pods(k.namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: "app=rook-ceph-" + daemon,
 	})

@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"time"
 
 	cron "github.com/robfig/cron/v3"
 	"gopkg.in/yaml.v3"
@@ -80,12 +81,29 @@ type ClusterConfig struct {
 	// ServerOverride replaces the apiserver URL embedded in the kubeconfig.
 	ServerOverride        string `yaml:"server_override"`
 	InsecureSkipTLSVerify bool   `yaml:"insecure_skip_tls_verify"`
+	// APITimeout is the timeout for k8s API operations (e.g. listing pods).
+	// Empty or "0" uses the default (30s). Format: "30s", "1m", etc.
+	APITimeout string `yaml:"api_timeout"`
 	// GatewayNode is the one node that is configured in yaml.
 	// All other nodes are auto-discovered via kubectl get nodes and accessed
 	// over SSH using this node's credentials (passwordless root SSH assumed).
 	// If ssh_nodes is also set, those override the auto-discovered list.
 	GatewayNode *SSHNode  `yaml:"gateway_node"`
 	SSHNodes    []SSHNode `yaml:"ssh_nodes"`
+}
+
+// APITimeoutDuration returns the parsed api_timeout, or 0 if unset/invalid.
+// A 0 value tells the executor to use its default. The format is validated at
+// config load time, so parsing here should not fail for a loaded config.
+func (c *ClusterConfig) APITimeoutDuration() time.Duration {
+	if c.APITimeout == "" {
+		return 0
+	}
+	d, err := time.ParseDuration(c.APITimeout)
+	if err != nil {
+		return 0
+	}
+	return d
 }
 
 type SSHNode struct {
@@ -154,6 +172,12 @@ func Load(path string) (*Config, error) {
 		}
 		if cluster.Kubeconfig == "" {
 			return nil, fmt.Errorf("cluster %q: kubeconfig is required", name)
+		}
+		// Validate api_timeout format if specified (will be parsed when creating KubeExecutor).
+		if cluster.APITimeout != "" {
+			if _, err := time.ParseDuration(cluster.APITimeout); err != nil {
+				return nil, fmt.Errorf("cluster %q: invalid api_timeout %q: %w", name, cluster.APITimeout, err)
+			}
 		}
 	}
 

@@ -958,6 +958,7 @@ func (h *Handler) getKubeExecutor(clusterName string, cfg *config.ClusterConfig)
 		executor.WithToolboxPodHint(cfg.ToolboxPod),
 		executor.WithServerOverride(cfg.ServerOverride),
 		executor.WithInsecureSkipTLSVerify(cfg.InsecureSkipTLSVerify),
+		executor.WithAPITimeout(cfg.APITimeoutDuration()),
 	)
 	if err != nil {
 		return nil, err

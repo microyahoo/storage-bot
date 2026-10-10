@@ -2,6 +2,7 @@ package inspect
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -135,6 +136,15 @@ func (r *Runner) runWith(ctx context.Context, name string, ke *executor.KubeExec
 		ic := &InspectContext{Ctx: ctx, ClusterName: name, KubeExec: ke, SSHExec: r.sshExec, Thresholds: th}
 		if fs, err := in.Inspect(ic); err == nil {
 			rep.Findings = append(rep.Findings, fs...)
+		} else {
+			// Record inspector failures as Unknown findings so unreachable clusters don't appear healthy.
+			slog.Error("inspect: cluster-scope inspector failed", "cluster", name, "inspector", in.Name(), "error", err)
+			rep.Findings = append(rep.Findings, Finding{
+				Item:    in.Name(),
+				Level:   LevelUnknown,
+				Summary: "采集失败",
+				Detail:  fmt.Sprintf("inspector error: %v", err),
+			})
 		}
 	}
 
@@ -165,6 +175,18 @@ func (r *Runner) runWith(ctx context.Context, name string, ke *executor.KubeExec
 						}
 						local = append(local, f)
 					}
+				} else {
+					// Record inspector failures as Unknown findings.
+					slog.Error("inspect: node-scope inspector failed", "cluster", name, "node", node.Name, "inspector", in.Name(), "error", err)
+					f := Finding{
+						Item:    in.Name(),
+						Node:    node.Name,
+						NodeIP:  executor.HostIP(node.Host),
+						Level:   LevelUnknown,
+						Summary: "采集失败",
+						Detail:  fmt.Sprintf("inspector error: %v", err),
+					}
+					local = append(local, f)
 				}
 			}
 			mu.Lock()

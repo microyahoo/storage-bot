@@ -30,6 +30,7 @@ func NewManager(clusters map[string]*config.ClusterConfig) *Manager {
 			executor.WithToolboxPodHint(cfg.ToolboxPod),
 			executor.WithServerOverride(cfg.ServerOverride),
 			executor.WithInsecureSkipTLSVerify(cfg.InsecureSkipTLSVerify),
+			executor.WithAPITimeout(cfg.APITimeoutDuration()),
 		)
 	}
 	return m

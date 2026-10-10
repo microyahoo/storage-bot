@@ -48,7 +48,10 @@
       "Bash(gofmt -w executor/kube.go skill/builtin.go skill/skill.go intent/parser.go)",
       "Bash(sed -n '/func extractClusterTarget/,/^}/p' intent/parser.go)",
       "Bash(sed -n '/func extractClusterName/,/^}/p' intent/parser.go)",
-      "Bash(gofmt -w bot/handler.go inspect/scheduler.go)"
+      "Bash(gofmt -w bot/handler.go inspect/scheduler.go)",
+      "Bash(gofmt -w inspect/bond_delta.go inspect/bond_delta_test.go inspect/runner.go inspect/runner_test.go)",
+      "Bash(cat)",
+      "Read(//tmp/**)"
     ]
   }
 }

@@ -5,3 +5,4 @@ config.bak.yaml
 bin/
 inspect-reports/
 .superpowers/
+nohup.out
