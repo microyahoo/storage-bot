@@ -214,6 +214,18 @@ func (h *Handler) HandleMessage(ctx context.Context, event *larkim.P2MessageRece
 	if err != nil {
 		status = "error: " + err.Error()
 		reply = fmt.Sprintf("```\n%v\n```", err)
+	} else if action.Type == intent.ActionInspect {
+		// For inspect, also report the inspection level in audit status
+		switch inspectLevel {
+		case inspect.LevelCritical:
+			status = "critical"
+		case inspect.LevelWarn:
+			status = "warn"
+		case inspect.LevelUnknown:
+			status = "unknown"
+		default:
+			status = "ok"
+		}
 	}
 
 	if h.audit != nil {
