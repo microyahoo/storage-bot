@@ -814,6 +814,10 @@ func (h *Handler) handleInspect(ctx context.Context, action intent.Action) (stri
 		rep, err := h.inspectRunner.Run(ctx, name)
 		if err != nil {
 			fmt.Fprintf(&b, "❌ %s 巡检失败：%v\n", name, err)
+			// Treat runner.Run() error as LevelUnknown (collection failed).
+			if inspect.LevelUnknown > worst {
+				worst = inspect.LevelUnknown
+			}
 			continue
 		}
 		if rep.Overall > worst {

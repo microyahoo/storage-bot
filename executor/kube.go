@@ -122,6 +122,8 @@ func (k *KubeExecutor) findToolboxPod(ctx context.Context) (string, error) {
 
 	for _, pod := range pods.Items {
 		if pod.Status.Phase == corev1.PodRunning {
+			// Cache the discovered pod name to avoid re-discovery on next call.
+			k.toolboxPod = pod.Name
 			return pod.Name, nil
 		}
 	}
@@ -134,6 +136,8 @@ func (k *KubeExecutor) findToolboxPod(ctx context.Context) (string, error) {
 	}
 	for _, pod := range pods.Items {
 		if pod.Status.Phase == corev1.PodRunning {
+			// Cache the discovered pod name to avoid re-discovery on next call.
+			k.toolboxPod = pod.Name
 			return pod.Name, nil
 		}
 	}

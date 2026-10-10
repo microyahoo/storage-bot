@@ -159,6 +159,8 @@ func ThemeForLevel(l Level) card.Theme {
 		return card.ThemeRed
 	case LevelWarn:
 		return card.ThemeOrange
+	case LevelUnknown:
+		return card.ThemeGray
 	default:
 		return card.ThemeGreen
 	}
